@@ -1,0 +1,1700 @@
+/* features/workflow 전용 스타일 (styles/index.css에서 import, legacy-* 뒤에 온다) */
+
+/* 공용 UploadPicker·ExportMenu는 unified-upload-picker(폭 520px)를 쓴다. 워크플로우 툴바·실행 목록에서는 내용 폭으로 줄인다. */
+.workflow-run-toolbar-actions > .unified-upload-picker,
+.workflow-run-history-actions > .unified-upload-picker {
+  width: auto;
+}
+
+.workflow-run-toolbar-actions > .unified-upload-picker .workflow-upload {
+  min-height: auto;
+  width: auto;
+}
+
+/* ===== 편집기 레이아웃: 팔레트 | (툴바 / 캔버스 | 오른쪽 패널 / 검증 바) =====
+   오른쪽 패널 열은 항상 있다(--wf-right-panel-width). 선택이 바뀌어도 캔버스 폭이 변하지 않는다. */
+.workflow-builder.wf-editor {
+  overflow: hidden;
+}
+
+.wf-editor .workflow-main-area {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(0, 1fr) var(--wf-right-panel-width, 360px);
+  min-height: 0;
+  min-width: 0;
+}
+
+.wf-editor .workflow-canvas {
+  min-height: 0;
+  min-width: 0;
+}
+
+/* 툴바: 왼쪽 묶음(이름·불러오기·AI·저장) | 오른쪽 묶음(문서·실행). 좁으면 두 줄로 접힌다. */
+.wf-editor .workflow-toolbar {
+  justify-content: space-between;
+  row-gap: var(--space-2);
+}
+
+.wf-toolbar-group {
+  align-items: center;
+  display: flex;
+  flex: 1 1 auto;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.wf-toolbar-name {
+  flex: 1 1 200px;
+  max-width: 320px;
+  min-width: 140px;
+}
+
+.wf-toolbar-select {
+  flex: 0 1 200px;
+  min-width: 130px;
+}
+
+/* ===== 노드 카드: 읽기 전용 칩 + 배지 =====
+   에셋 칩이 있는 노드도 데모 레이아웃 열 간격(210~230)에 맞게 폭을 고정한다(겹침 방지). 긴 칩·설명은 말줄임 + title. */
+.wf-editor .workflow-node-configurable {
+  max-width: 196px;
+  min-width: 196px;
+}
+
+.wf-editor .workflow-node-configurable > span:not(.wf-node-chip) {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wf-editor .workflow-node .wf-node-chip {
+  max-width: 100%;
+}
+
+.workflow-node .wf-node-chip {
+  background: var(--color-surface-muted);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  display: block;
+  font-size: var(--font-11);
+  font-weight: 700;
+  margin-top: var(--space-2);
+  max-width: 230px;
+  overflow: hidden;
+  padding: 4px var(--space-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-node .wf-node-chip[data-missing="true"] {
+  background: var(--tone-warning-bg);
+  color: var(--tone-warning-fg);
+}
+
+.wf-node-badges {
+  display: flex;
+  gap: var(--space-1);
+  pointer-events: none;
+  position: absolute;
+  right: var(--space-2);
+  top: -11px;
+}
+
+.workflow-node .wf-node-badge {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.3;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+
+.workflow-node .wf-node-badge[data-tone="danger"] {
+  background: var(--tone-danger-bg);
+  border-color: var(--tds-red-500);
+  color: var(--tone-danger-fg);
+}
+
+.workflow-node .wf-node-badge[data-tone="warning"] {
+  background: var(--tone-warning-bg);
+  border-color: var(--tone-warning-fg);
+  color: var(--tone-warning-fg);
+}
+
+.workflow-node .wf-node-badge[data-tone="draft"] {
+  background: var(--tone-info-bg);
+  border-color: var(--color-accent);
+  color: var(--tone-info-fg);
+}
+
+/* ===== 오른쪽 패널 ===== */
+.wf-right-panel {
+  background: var(--color-surface);
+  border-left: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+}
+
+.wf-right-panel-resize {
+  bottom: 0;
+  cursor: col-resize;
+  left: -4px;
+  position: absolute;
+  top: 0;
+  width: 8px;
+  z-index: 5;
+}
+
+.wf-right-panel-resize:hover,
+.wf-right-panel-resize:focus-visible {
+  background: linear-gradient(
+    90deg,
+    transparent 3px,
+    var(--color-accent) 3px,
+    var(--color-accent) 5px,
+    transparent 5px
+  );
+  outline: none;
+}
+
+.wf-right-panel-tabs {
+  align-items: stretch;
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  flex: 0 0 44px;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+}
+
+.wf-right-panel .wf-right-panel-tab {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--color-text-subtle);
+  display: inline-flex;
+  font-size: var(--font-13);
+  font-weight: 800;
+  gap: 6px;
+  min-height: 0;
+  padding: 0 var(--space-3);
+}
+
+.wf-right-panel .wf-right-panel-tab:hover {
+  background: transparent;
+  color: var(--color-text);
+  transform: none;
+}
+
+.wf-right-panel .wf-right-panel-tab[aria-selected="true"] {
+  border-bottom-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+.wf-right-panel-collapse {
+  align-self: center;
+  margin-left: auto;
+}
+
+.wf-right-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.wf-right-panel-body[hidden] {
+  display: none;
+}
+
+.wf-tab-badge {
+  align-items: center;
+  background: var(--tone-info-bg);
+  border-radius: var(--radius-pill);
+  color: var(--tone-info-fg);
+  display: inline-flex;
+  font-size: var(--font-11);
+  font-weight: 800;
+  gap: 4px;
+  padding: 1px 7px;
+}
+
+.wf-tab-badge i {
+  animation: wf-pulse 1.4s ease-in-out infinite;
+  background: var(--color-accent);
+  border-radius: 50%;
+  height: 6px;
+  width: 6px;
+}
+
+@keyframes wf-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* 접힌 레일(40px) */
+.wf-right-panel-rail {
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+
+.wf-right-panel-rail .wf-rail-tab {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+  color: var(--color-text-subtle);
+  display: flex;
+  flex-direction: column;
+  font-size: var(--font-11);
+  font-weight: 800;
+  gap: 6px;
+  min-height: 0;
+  padding: var(--space-2) 0;
+  width: 32px;
+}
+
+.wf-right-panel-rail .wf-rail-tab:hover {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  transform: none;
+}
+
+.wf-right-panel-rail .wf-rail-tab span {
+  writing-mode: vertical-rl;
+}
+
+.wf-right-panel-rail .wf-tab-badge {
+  padding: 2px 4px;
+}
+
+/* 실행 탭: 실행 목록이 패널 높이를 채운다. */
+.wf-right-panel .workflow-run-history {
+  border: 0;
+  border-radius: 0;
+  gap: var(--space-2);
+  height: 100%;
+  max-height: none;
+  padding: var(--space-3);
+}
+
+.wf-right-panel .workflow-run-history-item {
+  align-items: stretch;
+  gap: var(--space-2);
+  grid-template-columns: minmax(0, 1fr);
+  padding: 10px;
+}
+
+.wf-right-panel .workflow-run-history-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-start;
+}
+
+.wf-right-panel .workflow-run-history-actions button,
+.wf-right-panel .workflow-run-history-actions .link-button {
+  min-height: 30px;
+  padding: 6px var(--space-2);
+}
+
+/* ===== Inspector ===== */
+.wf-inspector {
+  display: flex;
+  flex-direction: column;
+}
+
+.wf-inspector-head {
+  align-items: flex-start;
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  gap: 10px;
+  padding: 14px var(--space-4);
+}
+
+.wf-inspector-head > div:not(.wf-inspector-head-actions) {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wf-inspector-head .eyebrow {
+  margin: 0;
+}
+
+.wf-inspector-head h3 {
+  font-size: var(--font-16);
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wf-inspector-head small {
+  color: var(--color-text-subtle);
+  font-size: var(--font-12);
+}
+
+.wf-inspector-icon {
+  align-items: center;
+  background: var(--color-accent-soft);
+  border-radius: var(--radius-md);
+  color: var(--color-accent);
+  display: inline-flex;
+  flex: 0 0 34px;
+  height: 34px;
+  justify-content: center;
+}
+
+.wf-inspector-title-input {
+  border-color: transparent;
+  font-size: 15px;
+  font-weight: 800;
+  margin-left: -7px;
+  min-height: 32px;
+  padding: 4px 6px;
+  width: calc(100% + 7px);
+}
+
+.wf-inspector-title-input:hover {
+  border-color: var(--color-border);
+}
+
+.wf-inspector-head-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.wf-inspector-section {
+  border-bottom: 1px solid var(--color-border);
+  display: grid;
+  gap: 10px;
+  padding: 14px var(--space-4);
+}
+
+.wf-inspector-section > header {
+  align-items: center;
+  display: flex;
+  gap: var(--space-2);
+  justify-content: space-between;
+  min-height: 24px;
+}
+
+.wf-inspector-section h4 {
+  align-items: center;
+  color: var(--color-text-muted);
+  display: inline-flex;
+  font-size: var(--font-12);
+  font-weight: 800;
+  gap: 6px;
+  margin: 0;
+}
+
+.wf-inspector-counts {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.wf-inspector-counts span {
+  border-radius: var(--radius-pill);
+  font-size: var(--font-11);
+  padding: 1px 7px;
+}
+
+.wf-inspector-counts span[data-tone="danger"] {
+  background: var(--tone-danger-bg);
+  color: var(--tone-danger-fg);
+}
+
+.wf-inspector-counts span[data-tone="warning"] {
+  background: var(--tone-warning-bg);
+  color: var(--tone-warning-fg);
+}
+
+.wf-inspector-textarea {
+  min-height: 64px;
+  resize: vertical;
+  width: 100%;
+}
+
+.wf-inspector-muted {
+  color: var(--color-text-subtle);
+  font-size: var(--font-12);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.wf-inspector-ok {
+  align-items: center;
+  color: var(--tone-success-fg);
+  display: flex;
+  font-size: var(--font-13);
+  gap: 6px;
+  margin: 0;
+}
+
+.wf-inspector-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.wf-inspector > .wf-inspector-actions {
+  padding: 14px var(--space-4);
+}
+
+.wf-field {
+  display: grid;
+  gap: 4px;
+}
+
+.wf-field > span {
+  color: var(--color-text-muted);
+  font-size: var(--font-12);
+  font-weight: 700;
+}
+
+.wf-field input,
+.wf-field select {
+  width: 100%;
+}
+
+.wf-issue-list,
+.wf-branch-list,
+.wf-connection-list,
+.wf-document-list {
+  display: grid;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.wf-issue-list li > button,
+.wf-issue-list li > div {
+  align-items: flex-start;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  box-shadow: none;
+  display: flex;
+  font-size: var(--font-12);
+  font-weight: 600;
+  gap: var(--space-2);
+  justify-content: flex-start;
+  line-height: 1.45;
+  min-height: 0;
+  padding: var(--space-2) 10px;
+  text-align: left;
+  width: 100%;
+}
+
+.wf-issue-list li > * > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.wf-issue-list li[data-level="error"] > * {
+  background: var(--tone-danger-bg);
+  color: var(--tone-danger-fg);
+}
+
+.wf-issue-list li[data-level="warning"] > * {
+  background: var(--tone-warning-bg);
+  color: var(--tone-warning-fg);
+}
+
+.wf-issue-list li > button:hover {
+  border-color: currentColor;
+  transform: none;
+}
+
+.wf-issue-list small {
+  color: var(--color-text-subtle);
+  display: block;
+  font-weight: 500;
+  margin-top: 2px;
+}
+
+.wf-draft-note {
+  align-items: center;
+  background: var(--tone-warning-bg);
+  border-radius: var(--radius-md);
+  color: var(--tone-warning-fg);
+  display: flex;
+  font-size: var(--font-12);
+  gap: var(--space-2);
+  justify-content: space-between;
+  line-height: 1.45;
+  padding: var(--space-2) 10px;
+}
+
+.wf-asset-summary {
+  background: var(--color-surface-muted);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: var(--space-2);
+  padding: 10px var(--space-3);
+}
+
+.wf-asset-summary-head {
+  align-items: baseline;
+  display: flex;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.wf-asset-summary-head strong {
+  font-size: var(--font-13);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wf-asset-summary-head span {
+  color: var(--color-text-subtle);
+  flex: 0 0 auto;
+  font-size: var(--font-12);
+  font-weight: 700;
+}
+
+.wf-asset-summary ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.wf-asset-summary li {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-11);
+  max-width: 100%;
+  overflow: hidden;
+  padding: 2px var(--space-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wf-asset-summary li.wf-asset-summary-more {
+  background: transparent;
+  border-style: dashed;
+  color: var(--color-text-subtle);
+}
+
+.wf-branch-list li,
+.wf-connection-list li,
+.wf-document-list li {
+  align-items: center;
+  display: flex;
+  font-size: var(--font-13);
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.wf-branch-list li > strong {
+  flex: 0 1 auto;
+  font-size: var(--font-13);
+}
+
+.wf-branch-list li > small {
+  color: var(--tone-warning-fg);
+  font-size: var(--font-12);
+  margin-left: auto;
+}
+
+.wf-branch-list li > .wf-link {
+  margin-left: auto;
+}
+
+.wf-branch-list li[data-connected="true"] .branch-route-dot {
+  background: var(--tds-green-500);
+}
+
+.wf-branch-list li[data-connected="false"] .branch-route-dot {
+  background: var(--tone-warning-fg);
+}
+
+.wf-connection-list li > svg {
+  color: var(--color-text-subtle);
+  flex: 0 0 auto;
+}
+
+.wf-editor .wf-link,
+.wf-right-panel .wf-link {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  color: var(--color-accent);
+  display: inline-flex;
+  font-size: var(--font-13);
+  font-weight: 700;
+  gap: 4px;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wf-editor .wf-link:hover {
+  background: transparent;
+  text-decoration: underline;
+  transform: none;
+}
+
+.wf-document-list li > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wf-document-list li > small {
+  color: var(--color-text-subtle);
+  flex: 0 0 auto;
+  font-size: var(--font-11);
+}
+
+.wf-document-list li.wf-document-more {
+  color: var(--color-text-subtle);
+  font-size: var(--font-12);
+}
+
+.wf-edge-route {
+  align-items: center;
+  display: flex;
+  gap: var(--space-2);
+}
+
+.wf-edge-route .wf-edge-endpoint {
+  align-items: center;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+  display: flex;
+  flex: 1 1 0;
+  font-size: var(--font-13);
+  gap: 6px;
+  min-height: 0;
+  min-width: 0;
+  padding: var(--space-2) 10px;
+}
+
+.wf-edge-route .wf-edge-endpoint span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wf-kv,
+.wf-inspector-shortcuts dl {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.wf-kv > div,
+.wf-inspector-shortcuts dl > div {
+  align-items: center;
+  display: flex;
+  font-size: var(--font-12);
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.wf-kv dt,
+.wf-inspector-shortcuts dd {
+  color: var(--color-text-subtle);
+  margin: 0;
+}
+
+.wf-kv dd {
+  font-weight: 700;
+  margin: 0;
+}
+
+.wf-inspector-shortcuts dt {
+  background: var(--color-surface-muted);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--font-11);
+  padding: 1px 6px;
+}
+
+/* ===== 검증 바: 고정 높이 한 줄 ===== */
+.wf-status-bar {
+  align-items: center;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  flex: 0 0 36px;
+  font-size: var(--font-12);
+  gap: var(--space-3);
+  height: 36px;
+  overflow: hidden;
+  padding: 0 var(--space-3);
+  white-space: nowrap;
+}
+
+.wf-status-bar .wf-status-summary {
+  align-items: center;
+  border: 0;
+  border-radius: var(--radius-pill);
+  box-shadow: none;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: var(--font-12);
+  font-weight: 800;
+  gap: 6px;
+  min-height: 0;
+  padding: 3px 10px;
+}
+
+.wf-status-bar .wf-status-summary[data-tone="danger"] {
+  background: var(--tone-danger-bg);
+  color: var(--tone-danger-fg);
+}
+
+.wf-status-bar .wf-status-summary[data-tone="warning"] {
+  background: var(--tone-warning-bg);
+  color: var(--tone-warning-fg);
+}
+
+.wf-status-bar .wf-status-summary[data-tone="success"] {
+  background: var(--tone-success-bg);
+  color: var(--tone-success-fg);
+}
+
+.wf-status-error {
+  align-items: center;
+  color: var(--tone-danger-fg);
+  display: inline-flex;
+  flex: 1 1 auto;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wf-status-autosave {
+  color: var(--color-text-subtle);
+  margin-left: auto;
+}
+
+/* ===== 에셋 편집 Drawer ===== */
+.wf-drawer-title {
+  align-items: center;
+  display: inline-flex;
+  gap: 10px;
+}
+
+.wf-draft-pill {
+  background: var(--tone-warning-bg);
+  border-radius: var(--radius-pill);
+  color: var(--tone-warning-fg);
+  font-size: var(--font-12);
+  font-weight: 800;
+  padding: 2px var(--space-2);
+}
+
+.wf-drawer-footer {
+  align-items: center;
+  color: var(--color-text-subtle);
+  display: flex;
+  font-size: var(--font-12);
+  gap: var(--space-3);
+  justify-content: space-between;
+  width: 100%;
+}
+
+.wf-asset-editor {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.wf-asset-editor-head {
+  align-items: center;
+  display: flex;
+  gap: var(--space-3);
+  justify-content: space-between;
+}
+
+.wf-asset-editor-head > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wf-asset-editor-head strong {
+  color: var(--color-text);
+  font-size: var(--font-14);
+}
+
+.wf-asset-editor-head span {
+  color: var(--color-text-subtle);
+  font-size: var(--font-12);
+}
+
+.wf-asset-editor .module-config-table textarea {
+  min-height: 42px;
+}
+
+.wf-asset-editor .module-config-table input[type="checkbox"] {
+  min-height: 0;
+  width: auto;
+}
+
+.wf-asset-editor .module-config-table .icon-only {
+  margin: 2px auto;
+}
+
+/* ===== 왼쪽 모듈 팔레트: 한 줄 행(아이콘 · 이름 · +). 설명은 title 툴팁 =====
+   900px 높이에서 모듈 8개와 에셋 바로가기가 스크롤 없이 보인다. */
+.workflow-builder.wf-editor {
+  grid-template-columns: minmax(184px, 212px) minmax(0, 1fr);
+}
+
+.wf-editor .workflow-palette {
+  gap: 10px;
+  padding: 12px;
+}
+
+.wf-editor .workflow-node-list,
+.wf-editor .workflow-library-shortcuts {
+  gap: 4px;
+}
+
+.wf-editor .workflow-palette-item {
+  align-items: center;
+  border-radius: var(--radius-md, 8px);
+  gap: var(--space-2, 8px);
+  justify-content: flex-start;
+  min-height: 0;
+  padding: 7px 10px;
+}
+
+.wf-editor .workflow-palette-item > svg:first-child {
+  color: var(--color-text-muted, #4e5968);
+  flex: 0 0 auto;
+}
+
+.wf-editor .workflow-palette-item strong {
+  flex: 1 1 auto;
+  font-size: var(--font-13, 13px);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wf-editor .workflow-palette-item .workflow-palette-add {
+  color: var(--color-text-muted, #8b95a1);
+  flex: 0 0 auto;
+}
+
+.wf-editor .workflow-palette-item:hover .workflow-palette-add {
+  color: var(--color-primary, #3182f6);
+}
+
+.wf-editor .workflow-library-shortcuts button {
+  font-size: var(--font-13, 13px);
+  min-height: 0;
+  padding: 7px 10px;
+}
+
+/* ===== 미니맵: 작고(160×110) 은은하게, 오른쪽 아래. 1280px 이하에서는 숨긴다(아래 반응형). ===== */
+.wf-editor .react-flow__minimap.wf-minimap {
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border, #e5e8eb);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: none;
+  margin: 10px;
+  opacity: 0.85;
+  overflow: hidden;
+}
+
+.wf-editor .react-flow__minimap.wf-minimap:hover {
+  opacity: 1;
+}
+
+.wf-editor .react-flow__minimap.wf-minimap svg {
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+
+/* ===== 반응형 ===== */
+@media (max-width: 1280px) {
+  .workflow-builder.wf-editor {
+    grid-template-columns: minmax(180px, 210px) minmax(0, 1fr);
+  }
+
+  /* 좁은 캔버스에서 미니맵이 노드를 가리지 않게 숨긴다(F·컨트롤로 화면 맞춤 가능). */
+  .wf-editor .react-flow__minimap {
+    display: none;
+  }
+}
+
+@media (max-width: 1100px) {
+  .workflow-builder.wf-editor {
+    gap: 10px;
+    grid-template-columns: 176px minmax(0, 1fr);
+  }
+
+  .wf-editor .workflow-palette {
+    padding: 10px;
+  }
+
+  .wf-editor .workflow-palette-item {
+    min-height: 0;
+    padding: var(--space-2) 10px;
+  }
+
+  .wf-editor .workflow-palette-item small {
+    display: none;
+  }
+
+  .wf-editor .workflow-palette-item strong {
+    font-size: var(--font-13);
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 860px) {
+  .workflow-builder.wf-editor {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+
+  .wf-editor .workflow-main-area {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(420px, 1fr) auto;
+  }
+
+  .wf-right-panel {
+    border-left: 0;
+    border-top: 1px solid var(--color-border);
+    max-height: 60vh;
+  }
+
+  .wf-right-panel-resize {
+    display: none;
+  }
+}
+
+/* 표 추출 노드: 실행할 표 체크 목록, 실행 결과 요약 */
+.wf-asset-summary ul.wf-table-keys {
+  display: grid;
+  gap: 4px;
+}
+
+.wf-asset-summary ul.wf-table-keys li {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font-size: var(--font-12);
+  padding: 0;
+}
+
+.wf-table-keys label {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.wf-table-keys small {
+  color: var(--color-text-subtle);
+  margin-left: auto;
+}
+
+.workflow-table-result {
+  display: grid;
+  gap: 8px;
+}
+
+.workflow-table-result + .workflow-table-result {
+  border-top: 1px dashed var(--color-border);
+  padding-top: 10px;
+}
+
+.workflow-table-result-head {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+/* ------------------------------------------------------------------
+ * 워크플로우 실행 결과 창(/workflow-runs/:runId): 3열 작업대와 오른쪽 문서 결과.
+ * 규칙(docs/ux/module-unification-spec.md B-4):
+ *  - 오른쪽 패널(.workflow-item-detail)이 유일한 세로 스크롤 컨테이너다. 블록 흐름이라 섹션·표는
+ *    자기 높이만큼 자란다. (예전에는 flex column 안의 overflow-x:auto 표 래퍼가 min-height:0으로
+ *    눌려 KIE·필수항목 표가 32px짜리 내부 스크롤 상자가 됐다.)
+ *  - 표는 가로로만 스크롤한다.
+ * ------------------------------------------------------------------ */
+.workflow-result-window .workflow-run-workbench.workflow-run-workbench-resizable {
+  grid-template-columns: var(
+    --wf-result-columns,
+    minmax(220px, 280px) 12px minmax(420px, 1fr) 12px minmax(300px, 420px)
+  );
+}
+
+.workflow-result-window .workflow-item-detail {
+  background: var(--color-surface);
+  border: 0;
+  border-left: 1px solid var(--color-border);
+  border-radius: 0;
+  box-shadow: none;
+  display: block;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  container: wf-docres / inline-size;
+  overscroll-behavior: contain;
+  padding: 0 12px 16px;
+  scrollbar-gutter: stable;
+}
+
+.workflow-item-detail > * + * {
+  margin-top: 10px;
+}
+
+.wf-docres-head {
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  display: grid;
+  gap: 6px;
+  padding: 10px 0 8px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.wf-docres-title {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.wf-docres-title .eyebrow {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.wf-docres-title h3 {
+  flex: 0 1 auto;
+  font-size: var(--font-16);
+  letter-spacing: 0;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wf-docres-nav {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.wf-docres-nav button {
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-muted);
+  flex: none;
+  font-size: var(--font-12);
+  font-weight: 700;
+  min-height: 0;
+  padding: 3px 10px;
+}
+
+.wf-docres-nav button:hover,
+.wf-docres-nav button:focus-visible {
+  background: var(--tone-info-bg);
+  border-color: var(--tds-blue-100);
+  color: var(--color-accent);
+}
+
+/* 위쪽 요약: 촘촘한 key/value 격자(폭에 따라 2~3열). */
+.wf-docres-summary {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  display: grid;
+  gap: 0;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  margin-bottom: 0;
+  overflow: hidden;
+}
+
+.wf-docres-summary > div {
+  border-bottom: 1px solid var(--tds-gray-100);
+  border-right: 1px solid var(--tds-gray-100);
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  padding: 5px 8px;
+}
+
+.wf-docres-summary dt {
+  color: var(--color-text-subtle);
+  font-size: var(--font-11);
+  font-weight: 700;
+}
+
+.wf-docres-summary dd {
+  font-size: var(--font-13);
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wf-docres-summary .ui-status-badge {
+  font-size: var(--font-11);
+  padding: 1px 6px;
+}
+
+.wf-docres-note {
+  background: var(--tone-warning-bg);
+  border-radius: var(--radius-sm);
+  color: var(--tone-warning-fg);
+  font-size: var(--font-12);
+  margin-bottom: 0;
+  padding: 6px 8px;
+}
+
+.wf-docres-note[data-tone="info"] {
+  background: var(--tone-info-bg);
+  color: var(--tone-info-fg);
+}
+
+/* 결과 섹션 카드 */
+.wf-result-section {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  scroll-margin-top: 96px;
+}
+
+.wf-result-section[data-empty="true"] {
+  background: var(--color-surface-muted);
+  border-style: dashed;
+}
+
+.wf-result-section-heading {
+  font-size: inherit;
+  margin: 0;
+}
+
+.wf-result-section-head {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-md);
+  box-shadow: none;
+  color: var(--color-text);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  justify-content: flex-start;
+  min-height: 0;
+  padding: 8px 10px;
+  text-align: left;
+  width: 100%;
+}
+
+button.wf-result-section-head:hover {
+  background: var(--color-surface-muted);
+  transform: none;
+}
+
+.wf-result-section-head h4,
+.wf-result-section-title {
+  font-size: var(--font-14);
+  font-weight: 800;
+  letter-spacing: 0;
+  margin: 0;
+}
+
+.wf-result-section-head svg {
+  color: var(--color-text-subtle);
+  flex: none;
+}
+
+.wf-result-section-meta,
+.wf-result-section-empty {
+  color: var(--color-text-subtle);
+  font-size: var(--font-12);
+  font-weight: 600;
+}
+
+.wf-result-section[data-open="true"] .wf-result-section-head {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.wf-result-section-body {
+  border-top: 1px solid var(--tds-gray-100);
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.wf-result-muted {
+  color: var(--color-text-subtle);
+  font-size: var(--font-12);
+  margin: 0;
+}
+
+/* 섹션 안 표: 패널 스크롤만 쓰고, 가로로만 스크롤한다. */
+.workflow-item-detail .ui-result-table-wrap,
+.wf-docres-table-wrap {
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.workflow-item-detail .ui-result-table {
+  font-size: var(--font-12);
+  min-width: 340px;
+}
+
+/* 좁은 패널(드래그로 줄였거나 1100px 근처): 표를 가로 스크롤 대신 줄바꿈으로 맞춘다. */
+@container wf-docres (max-width: 400px) {
+  .workflow-item-detail .ui-result-table {
+    min-width: 0;
+  }
+
+  .wf-result-section-body {
+    padding: 8px 6px;
+  }
+}
+
+.workflow-item-detail .ui-result-table th,
+.workflow-item-detail .ui-result-table td {
+  padding: 6px 8px;
+  vertical-align: top;
+}
+
+.workflow-item-detail .ui-result-table th {
+  position: static;
+}
+
+.wf-confidence {
+  font-variant-numeric: tabular-nums;
+}
+
+.wf-docres-table-wrap {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.wf-docres-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--font-12);
+  min-width: 100%;
+  width: max-content;
+}
+
+.wf-docres-table.wf-table-summary {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.wf-docres-table th,
+.wf-docres-table td {
+  border-bottom: 1px solid var(--tds-gray-100);
+  border-right: 1px solid var(--tds-gray-100);
+  max-width: 220px;
+  overflow-wrap: anywhere;
+  padding: 5px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.wf-docres-table th {
+  background: var(--color-surface-muted);
+  color: var(--color-text-subtle);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.wf-docres-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.wf-docres-table th:last-child,
+.wf-docres-table td:last-child {
+  border-right: 0;
+}
+
+.wf-docres-table tr[data-tone="warning"] td,
+.wf-docres-table td[data-tone="warning"] {
+  background: color-mix(in srgb, var(--tone-warning-bg) 70%, transparent);
+}
+
+.wf-docres-table tr[data-tone="danger"] td,
+.wf-docres-table td[data-tone="danger"] {
+  background: color-mix(in srgb, var(--tone-danger-bg) 70%, transparent);
+}
+
+.wf-docres-table tr[data-violation] .wf-table-preview-index {
+  box-shadow: inset 3px 0 0 var(--tds-red-500);
+}
+
+.wf-table-preview-index {
+  color: var(--color-text-subtle);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  width: 32px;
+}
+
+.wf-table-preview {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.wf-table-preview figcaption {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+}
+
+.wf-table-preview figcaption strong {
+  font-size: var(--font-13);
+}
+
+.wf-table-preview figcaption .wf-link,
+.workflow-table-result-head .wf-link {
+  font-size: var(--font-12);
+  font-weight: 700;
+  margin-left: auto;
+}
+
+/* 근거: 2줄 말줄임 + 더 보기 */
+.wf-evidence {
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+  min-width: 0;
+}
+
+.wf-evidence-text {
+  overflow-wrap: anywhere;
+}
+
+.wf-evidence[data-clamped="true"] .wf-evidence-text {
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  display: -webkit-box;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+.wf-evidence-toggle {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  color: var(--color-accent);
+  font-size: var(--font-11);
+  font-weight: 700;
+  min-height: 0;
+  padding: 0;
+}
+
+.wf-evidence-toggle:hover {
+  background: transparent;
+  text-decoration: underline;
+  transform: none;
+}
+
+/* 분류 상세 */
+.wf-kv-list {
+  display: grid;
+  font-size: var(--font-13);
+  gap: 4px 12px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  margin: 0;
+}
+
+.wf-kv-list dt {
+  color: var(--color-text-subtle);
+  font-size: var(--font-12);
+  font-weight: 700;
+}
+
+.wf-kv-list dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.wf-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.wf-chip-list span {
+  background: var(--color-surface-muted);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-12);
+  padding: 1px 8px;
+}
+
+/* 회전 보정: 작은 썸네일 줄(가로 스크롤) */
+.wf-rotation-strip {
+  display: flex;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0 0 2px;
+}
+
+.wf-rotation-strip li {
+  display: grid;
+  flex: none;
+  gap: 2px;
+  justify-items: center;
+  width: 64px;
+}
+
+.wf-rotation-strip a {
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  display: block;
+  height: 72px;
+  overflow: hidden;
+  width: 56px;
+}
+
+.wf-rotation-strip li[data-tone="warning"] a {
+  border-color: var(--tone-warning-fg);
+  box-shadow: 0 0 0 1px var(--tone-warning-bg);
+}
+
+.wf-rotation-strip li[data-tone="success"] a {
+  border-color: var(--tone-success-fg);
+}
+
+.wf-rotation-strip img {
+  display: block;
+  height: 100%;
+  object-fit: contain;
+  width: 100%;
+}
+
+.wf-rotation-strip span {
+  color: var(--color-text-subtle);
+  font-size: var(--font-11);
+  max-width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* <1100px: 목록 · 미리보기 · 결과를 세로로 쌓고 작업대 전체가 스크롤한다. */
+@media (max-width: 1099.98px) {
+  .workflow-result-window .workflow-results {
+    min-width: 0;
+  }
+
+  .workflow-result-window .workflow-run-workbench.workflow-run-workbench-resizable {
+    grid-auto-rows: auto;
+    grid-template-columns: minmax(0, 1fr);
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .workflow-result-window .workflow-result-splitter {
+    display: none;
+  }
+
+  .workflow-result-window .workflow-run-rail {
+    border-bottom: 1px solid var(--color-border);
+    border-right: 0;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+
+  .workflow-result-window .workflow-preview-pane {
+    height: min(70vh, 640px);
+  }
+
+  .workflow-result-window .workflow-item-detail {
+    border-left: 0;
+    border-top: 1px solid var(--color-border);
+    overflow: visible;
+  }
+}
+
+/* ------------------------------------------------------------------
+ * 결과 창 헤더(한 줄, ≈52px): 이름 · 상태 · 진행률 | 묶음 카운터 | [다음 검토][Export ▾][동작…][×]
+ * 최근 export 이력은 Export 메뉴 footer에 있어 헤더 높이를 차지하지 않는다.
+ * ------------------------------------------------------------------ */
+.wf-run-header {
+  align-items: center;
+  background: var(--color-surface);
+  display: grid;
+  gap: 6px 12px;
+  grid-template-areas: "title stats actions";
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr) auto;
+  min-height: 52px;
+  padding: 8px 12px;
+}
+
+.wf-run-header-title {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  grid-area: title;
+  min-width: 0;
+}
+
+.wf-run-header-title .eyebrow {
+  margin: 0;
+}
+
+.wf-run-header-title h2 {
+  font-size: var(--font-16, 16px);
+  line-height: 1.25;
+  margin: 0;
+  max-width: 340px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wf-run-header-percent {
+  color: var(--color-text-muted);
+  font-size: var(--font-13);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.wf-run-header-stats {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  grid-area: stats;
+  min-width: 0;
+}
+
+.wf-run-pill {
+  align-items: center;
+  background: var(--tds-gray-50, #f8fafc);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-subtle);
+  display: inline-flex;
+  font-size: var(--font-12);
+  font-variant-numeric: tabular-nums;
+  gap: 4px;
+  line-height: 1.2;
+  padding: 4px 9px;
+  white-space: nowrap;
+}
+
+.wf-run-pill strong {
+  color: var(--color-text);
+  font-weight: 700;
+}
+
+.wf-run-pill-part[data-tone="warning"] strong {
+  color: var(--tone-warning-fg);
+}
+
+.wf-run-pill-part[data-tone="danger"] strong {
+  color: var(--tone-danger-fg);
+}
+
+.wf-run-pill-part[data-tone="success"] strong {
+  color: var(--tone-success-fg);
+}
+
+.wf-run-pill-part[data-tone="info"] strong {
+  color: var(--tone-info-fg);
+}
+
+.wf-run-pill-sep {
+  color: var(--tds-gray-400, #94a3b8);
+  margin-right: 4px;
+}
+
+.wf-run-header-actions {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  grid-area: actions;
+  justify-content: flex-end;
+}
+
+.wf-run-header-actions > .unified-upload-picker {
+  width: auto;
+}
+
+.workflow-result-window .workflow-run-progress {
+  height: 3px;
+}
+
+/* ≤1100px: 카운터는 둘째 줄로 내려 감싼다. */
+@media (max-width: 1100px) {
+  .wf-run-header {
+    grid-template-areas:
+      "title actions"
+      "stats stats";
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .wf-run-header-title h2 {
+    max-width: none;
+  }
+}
+
+/* 좁은 화면: 동작 버튼도 아래로 감싼다. */
+@media (max-width: 640px) {
+  .wf-run-header {
+    grid-template-areas:
+      "title"
+      "actions"
+      "stats";
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wf-run-header-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+}

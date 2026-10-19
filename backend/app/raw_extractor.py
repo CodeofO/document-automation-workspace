@@ -7,8 +7,8 @@ import platform
 import shutil
 import subprocess
 import tempfile
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,8 +19,7 @@ except ImportError:  # pragma: no cover - compatibility for older PyMuPDF instal
     import fitz
 from fastapi import UploadFile
 
-from app.config import get_settings
-
+from app.core.config import get_settings
 
 RAW_EXTENSIONS = {".docx", ".xlsx", ".pptx", ".pdf"}
 OFFICE_PDF_FILTERS = {
@@ -146,9 +145,7 @@ def convert_office_to_pdf(source_path: Path, suffix: str, pdf_path: Path) -> Non
         ]
         completed = subprocess.run(cmd, capture_output=True, text=True, timeout=600, env=libreoffice_environment())
         if completed.returncode != 0:
-            raise RawExtractionError(
-                f"LibreOffice failed to convert the document to PDF: {completed.stderr or completed.stdout}"
-            )
+            raise RawExtractionError(f"LibreOffice failed to convert the document to PDF: {completed.stderr or completed.stdout}")
         produced = tmp_path / f"{source_path.stem}.pdf"
         if not produced.is_file():
             raise RawExtractionError("LibreOffice did not produce a PDF preview")
@@ -173,18 +170,13 @@ def find_libreoffice() -> Path:
     for candidate in candidates:
         if candidate.is_file():
             return candidate
-    raise RawExtractionError(
-        "LibreOffice was not found. Install LibreOffice or set LIBREOFFICE_PATH in the backend .env."
-    )
+    raise RawExtractionError("LibreOffice was not found. Install LibreOffice or set LIBREOFFICE_PATH in the backend .env.")
 
 
 def libreoffice_environment() -> dict[str, str]:
     env = os.environ.copy()
     if platform.system() == "Darwin":
-        env["PYTHONPATH"] = (
-            "/Applications/LibreOffice.app/Contents/Frameworks/"
-            "LibreOfficePython.framework/Versions/3.10/lib/python3.10"
-        )
+        env["PYTHONPATH"] = "/Applications/LibreOffice.app/Contents/Frameworks/LibreOfficePython.framework/Versions/3.10/lib/python3.10"
         env["PYTHONHOME"] = "/Applications/LibreOffice.app/Contents/Frameworks/LibreOfficePython.framework/Versions/3.10"
     elif platform.system() == "Linux":
         env["PYTHONPATH"] = "/opt/libreoffice25.2/program"
@@ -485,10 +477,7 @@ def _image_data_uri_html(blob: bytes, content_type: str | None, alt: str) -> str
         return ""
     encoded = base64.b64encode(blob).decode("ascii")
     escaped_alt = html.escape(alt, quote=True)
-    return (
-        f'<figure><img src="data:{content_type};base64,{encoded}" alt="{escaped_alt}" />'
-        f"<figcaption>{escaped_alt}</figcaption></figure>"
-    )
+    return f'<figure><img src="data:{content_type};base64,{encoded}" alt="{escaped_alt}" /><figcaption>{escaped_alt}</figcaption></figure>'
 
 
 def _image_content_type(extension: str | None) -> str | None:

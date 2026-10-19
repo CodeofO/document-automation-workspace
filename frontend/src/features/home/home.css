@@ -1,0 +1,324 @@
+/* features/home: 홈 화면(히어로·기능 카드·최근 실행). 토큰만 쓴다. */
+
+.home-monitor-module {
+  color: var(--tds-blue-600);
+  font-size: 12px;
+  font-weight: 900;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-section-title {
+  align-items: start;
+  display: grid;
+  gap: 4px;
+  justify-content: start;
+}
+
+.home-section-title h3 {
+  font-size: 21px;
+  margin: 0;
+}
+
+.feature-grid {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 14px;
+  grid-auto-rows: auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-height: 0;
+}
+
+.feature-card {
+  align-items: flex-start;
+  background: var(--color-surface);
+  border-color: var(--tds-gray-200);
+  border-radius: var(--tds-radius-lg);
+  box-shadow: var(--tds-shadow-card);
+  flex-direction: column;
+  gap: 12px;
+  justify-content: flex-start;
+  min-height: 224px;
+  padding: 24px;
+  position: relative;
+  text-align: left;
+}
+
+/* 문서 보관함: 한 줄 전체(2열) 또는 2칸(4열)을 쓰는 가로형 카드. 아이콘 왼쪽, 글은 오른쪽 열. */
+.feature-card.feature-card-wide {
+  align-content: start;
+  column-gap: 18px;
+  display: grid;
+  grid-column: span 2;
+  grid-template-columns: auto minmax(0, 1fr);
+  justify-items: start;
+  min-height: 0;
+}
+
+.feature-card-wide > .feature-icon {
+  grid-row: 1 / span 3;
+}
+
+.feature-card-wide > :not(.feature-icon) {
+  grid-column: 2;
+}
+
+@media (min-width: 1280px) {
+  .feature-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .feature-card.feature-card-wide {
+    align-content: center;
+    min-height: 224px;
+  }
+}
+
+@media (max-width: 640px) {
+  .feature-card.feature-card-wide {
+    display: flex;
+    grid-column: auto;
+  }
+}
+
+.feature-icon {
+  align-items: center;
+  background: var(--tds-blue-50);
+  border: 1px solid var(--tds-blue-100);
+  border-radius: var(--tds-radius-md);
+  color: var(--tds-blue-500);
+  display: inline-flex;
+  height: 46px;
+  justify-content: center;
+  width: 46px;
+}
+
+.feature-card strong {
+  color: var(--tds-gray-900);
+  font-size: 22px;
+}
+
+.feature-heading {
+  display: grid;
+  gap: 4px;
+}
+
+.feature-card span {
+  color: var(--tds-gray-700);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.feature-card .feature-heading span {
+  color: var(--tds-blue-600);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.feature-points {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.feature-points small {
+  background: var(--tds-gray-100);
+  border: 1px solid var(--tds-gray-200);
+  border-radius: 999px;
+  color: var(--tds-gray-700);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 9px;
+}
+
+.feature-card em {
+  color: var(--tds-blue-600);
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 800;
+  margin-top: auto;
+}
+
+.feature-card.active-feature:hover,
+.feature-card.active-feature:focus-visible {
+  border-color: var(--tds-blue-500);
+  box-shadow: var(--tds-shadow-focus);
+  transform: translateY(-1px);
+}
+
+.splitter {
+  align-items: center;
+  align-self: stretch;
+  background: var(--tds-gray-200);
+  border: 1px solid var(--tds-gray-300);
+  border-radius: 8px;
+  color: var(--tds-gray-700);
+  cursor: col-resize;
+  display: flex;
+  justify-content: center;
+  min-height: 0;
+  min-width: 12px;
+  padding: 0;
+  touch-action: none;
+}
+
+.splitter:hover,
+.splitter:focus-visible {
+  background: var(--tds-gray-200);
+  border-color: var(--tds-gray-400);
+  color: var(--tds-blue-700);
+}
+
+.pane-header {
+  align-items: center;
+  border-bottom: 1px solid var(--tds-gray-200);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 14px 16px;
+}
+
+.toolbar-upload {
+  background: var(--color-surface);
+  color: var(--tds-gray-800);
+  min-width: 38px;
+  padding: 8px;
+}
+
+.toolbar-upload {
+  align-items: center;
+  border: 1px solid var(--tds-gray-300);
+  border-radius: 8px;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 8px;
+  justify-content: center;
+  min-height: 38px;
+}
+
+.toolbar-upload input {
+  display: none;
+}
+
+.compact {
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
+.page-count {
+  color: var(--tds-gray-700);
+  font-size: 13px;
+  min-width: 52px;
+  text-align: center;
+}
+
+.unified-upload-picker {
+  width: min(520px, 100%);
+}
+
+.unified-upload-picker .workflow-upload {
+  justify-content: center;
+  min-height: 42px;
+  width: 100%;
+}
+
+/* features/home 전용 스타일. 예전 홈 모니터 규칙(legacy-01-workflow)보다 뒤에 와서 우선한다. */
+
+/* 최근 실행 패널: 카드 행이 잘리지 않도록 flex 열 + 고정 높이 행을 쓰고, 목록만 스크롤한다. */
+.home-hero-workflow .home-monitor-panel.ui-card {
+  align-self: stretch;
+  background: var(--color-surface);
+  box-shadow: var(--tds-shadow-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  max-height: 480px;
+  min-height: 0;
+  padding: 0;
+}
+
+.home-monitor-panel .ui-card-header h3 {
+  font-size: var(--font-16);
+}
+
+.home-monitor-items {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3);
+  /* 스크롤할 수 있다는 것이 보이도록 아래쪽을 살짝 흐린다. */
+  mask-image: linear-gradient(to bottom, black calc(100% - 16px), transparent);
+}
+
+.home-monitor-items > li {
+  flex: 0 0 auto;
+}
+
+.home-monitor-item {
+  align-items: stretch;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  display: grid;
+  gap: 6px;
+  justify-content: stretch;
+  min-height: 0;
+  overflow: visible;
+  padding: 10px 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.home-monitor-item:hover {
+  border-color: var(--color-accent);
+  box-shadow: var(--tds-shadow-soft);
+}
+
+.home-monitor-item.active {
+  border-color: var(--tds-blue-200);
+}
+
+.home-monitor-item-head {
+  align-items: center;
+  display: flex;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.home-monitor-item .home-monitor-module {
+  color: var(--color-text-subtle);
+  font-size: var(--font-12);
+  font-weight: 700;
+}
+
+.home-monitor-item > strong {
+  font-size: var(--font-14);
+}
+
+.home-monitor-counts {
+  color: var(--color-text-muted);
+  font-size: var(--font-12);
+  line-height: 1.45;
+}
+
+.home-monitor-stop {
+  background: var(--tone-neutral-bg);
+  border-radius: var(--radius-sm);
+  color: var(--tone-neutral-fg);
+  font-size: var(--font-12);
+  padding: 4px 8px;
+}
+
+.home-monitor-item.stopped .home-monitor-stop {
+  background: var(--tone-warning-bg);
+  color: var(--tone-warning-fg);
+}

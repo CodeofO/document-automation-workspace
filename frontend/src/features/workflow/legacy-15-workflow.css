@@ -1,0 +1,160 @@
+/* styles.css에서 순서 그대로 옮긴 구간 15 (주로 workflow). cascade 순서를 지키려고 styles/index.css에서 차례대로 import한다. */
+.workflow-handle {
+  background: var(--tds-gray-900);
+}
+
+.react-flow__edge-path {
+  stroke: var(--tds-gray-500);
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--tds-blue-500);
+}
+
+.react-flow__edge.workflow-edge-flowing .react-flow__edge-path {
+  animation: workflow-edge-flow 0.85s linear infinite;
+  stroke: var(--tds-blue-500);
+  stroke-dasharray: 8 8;
+  stroke-linecap: round;
+}
+
+@keyframes workflow-edge-flow {
+  to {
+    stroke-dashoffset: -32;
+  }
+}
+
+.workflow-upload {
+  background: #ffffff;
+  border-color: var(--tds-gray-300);
+  border-radius: var(--tds-radius-sm);
+}
+
+.workflow-upload:hover,
+.workflow-upload:focus-within {
+  background: var(--tds-blue-50);
+  border-color: var(--tds-blue-500);
+}
+
+.module-main-grid {
+  gap: 14px;
+}
+
+.module-side-pane {
+  gap: 14px;
+}
+
+.module-card,
+.module-status-card {
+  padding: 16px;
+}
+
+.module-card-header {
+  align-items: flex-start;
+}
+
+.module-card-actions button,
+.module-config-actions button,
+.module-upload-actions button,
+.workflow-results-actions button {
+  box-shadow: none;
+}
+
+.module-card-actions button:hover,
+.module-config-actions button:hover,
+.module-upload-actions button:hover,
+.workflow-results-actions button:hover {
+  box-shadow: 0 8px 18px rgba(49, 130, 246, 0.08);
+  transform: translateY(-1px);
+}
+
+.module-config-card {
+  border-color: var(--tds-gray-200);
+}
+
+.module-config-editor {
+  gap: 12px;
+}
+
+.module-toggle-row {
+  background: var(--tds-gray-50);
+  border-color: var(--tds-gray-200);
+  border-radius: var(--tds-radius-sm);
+}
+
+.classifier-outcome-note {
+  align-content: center;
+  color: var(--tds-gray-600);
+  display: grid;
+  gap: 4px;
+}
+
+.classifier-outcome-note strong {
+  color: var(--tds-gray-900);
+  font-size: 13px;
+}
+
+.module-config-table th,
+.module-result-table th,
+.workflow-module-table th {
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+.module-config-table tbody tr:hover td,
+.module-result-table tbody tr:hover td,
+.workflow-module-table tbody tr:hover td {
+  background: rgba(238, 246, 255, 0.45);
+}
+
+.module-config-actions {
+  border-color: var(--tds-gray-200);
+}
+
+.module-upload-zone svg,
+.upload-zone svg,
+.module-empty-preview svg,
+.module-empty-result svg {
+  color: var(--tds-gray-600);
+}
+
+.module-upload-zone:hover svg,
+.upload-zone:hover svg,
+.module-upload-zone:focus-within svg,
+.upload-zone:focus-within svg {
+  color: var(--tds-blue-500);
+}
+
+.module-upload-actions button,
+.unified-upload-actions button {
+  min-height: 42px;
+}
+
+.workflow-toolbar {
+  padding: 12px 14px;
+}
+
+.workflow-results-header {
+  min-height: 58px;
+}
+
+.workflow-run-rail {
+  padding: 14px;
+}
+
+.workflow-run-list button {
+  border-radius: var(--tds-radius-md);
+}
+
+.workflow-preview-toolbar {
+  background: #ffffff;
+}
+
+.workflow-preview-image-wrap {
+  border: 0;
+}
+
+.region-box {
+  background: rgba(49, 130, 246, 0.18);
+  border-color: var(--tds-blue-500);
+}

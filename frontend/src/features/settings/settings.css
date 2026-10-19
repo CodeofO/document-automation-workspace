@@ -1,0 +1,84 @@
+/* features/settings: 설정 대화상자. 토큰만 쓴다. */
+
+.settings-grid {
+  align-items: start;
+  display: grid;
+  column-gap: 10px;
+  row-gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-grid .wide-field {
+  grid-column: 1 / -1;
+}
+
+.settings-field {
+  align-content: start;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.settings-field input,
+.settings-field select {
+  width: 100%;
+}
+
+.settings-field-label,
+.settings-status {
+  color: var(--tds-gray-700);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.settings-help {
+  color: var(--tds-gray-600);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.settings-actions {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 2px;
+}
+
+.settings-status {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.danger-zone {
+  align-items: center;
+  border: 1px solid var(--tone-danger-soft-bg);
+  border-radius: 8px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 10px;
+}
+
+.danger-zone div {
+  display: grid;
+  gap: 3px;
+}
+
+.danger-zone span {
+  color: var(--tds-gray-700);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.success-text {
+  color: var(--tds-blue-700);
+}
+
+.warning-text {
+  color: var(--tds-yellow-700);
+}

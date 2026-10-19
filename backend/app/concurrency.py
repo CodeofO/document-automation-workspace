@@ -5,8 +5,7 @@ from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, TypeVar
 
-from app.config import get_settings
-
+from app.core.config import get_settings
 
 T = TypeVar("T")
 

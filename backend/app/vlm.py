@@ -1,51 +1,60 @@
 import asyncio
 import base64
-from contextlib import asynccontextmanager, contextmanager
 import functools
 import json
 import mimetypes
 import re
 import threading
 import time
+from contextlib import asynccontextmanager, contextmanager
 from typing import Any, Protocol
 
-from app.config import get_settings
-from app.prompts.classifier import (
-    DOCUMENT_CLASSIFIER_PROMPT,
-    build_classification_output_schema as _classification_output_schema,
-    build_classification_prompt as _build_classification_prompt,
-)
+from app.core.config import get_settings
+from app.domain.table_spec import TableSpec
+from app.prompts.classifier import DOCUMENT_CLASSIFIER_PROMPT
+from app.prompts.classifier import build_classification_output_schema as _classification_output_schema
+from app.prompts.classifier import build_classification_prompt as _build_classification_prompt
 from app.prompts.common import image_inputs_from_paths as _image_inputs_from_paths
 from app.prompts.kie import (
     KIE_SYSTEM_PROMPT,
-    build_correction_output_schema as _kie_correction_output_schema,
-    build_correction_prompt as _build_kie_correction_prompt,
-    build_extraction_prompt as _build_user_prompt,
-    build_judgement_output_schema as _kie_judgement_output_schema,
-    build_judgement_prompt as _build_kie_judgement_prompt,
     build_structured_output_schema,
 )
-from app.prompts.required_checker import (
-    REQUIRED_FIELD_CHECKER_PROMPT,
-    build_required_field_output_schema as _required_field_output_schema,
-    build_required_field_prompt as _build_required_field_prompt,
-)
+from app.prompts.kie import build_correction_output_schema as _kie_correction_output_schema
+from app.prompts.kie import build_correction_prompt as _build_kie_correction_prompt
+from app.prompts.kie import build_extraction_prompt as _build_user_prompt
+from app.prompts.kie import build_judgement_output_schema as _kie_judgement_output_schema
+from app.prompts.kie import build_judgement_prompt as _build_kie_judgement_prompt
+from app.prompts.required_checker import REQUIRED_FIELD_CHECKER_PROMPT
+from app.prompts.required_checker import build_required_field_output_schema as _required_field_output_schema
+from app.prompts.required_checker import build_required_field_prompt as _build_required_field_prompt
+from app.prompts.rotation import PAGE_ORIENTATION_PROMPT
+from app.prompts.rotation import build_orientation_prompt as _build_orientation_prompt
+from app.prompts.rotation import page_orientation_output_spec as _page_orientation_output_spec
 from app.prompts.schema_recommendation import (
     REQUIRED_FIELD_CHECKLIST_RECOMMENDATION_PROMPT,
     SCHEMA_DESCRIPTION_PROMPT,
     SCHEMA_RECOMMENDATION_PROMPT,
-    build_required_field_checklist_recommendation_output_schema as _required_field_checklist_recommendation_output_schema,
-    build_required_field_checklist_recommendation_prompt as _build_required_field_checklist_recommendation_prompt,
-    build_schema_description_output_schema as _schema_description_output_schema,
-    build_schema_description_prompt as _build_schema_description_prompt,
-    build_schema_recommendation_output_schema as _schema_recommendation_output_schema,
-    build_schema_recommendation_prompt as _build_schema_recommendation_prompt,
 )
+from app.prompts.schema_recommendation import (
+    build_required_field_checklist_recommendation_output_schema as _required_field_checklist_recommendation_output_schema,
+)
+from app.prompts.schema_recommendation import (
+    build_required_field_checklist_recommendation_prompt as _build_required_field_checklist_recommendation_prompt,
+)
+from app.prompts.schema_recommendation import build_schema_description_output_schema as _schema_description_output_schema
+from app.prompts.schema_recommendation import build_schema_description_prompt as _build_schema_description_prompt
+from app.prompts.schema_recommendation import build_schema_recommendation_output_schema as _schema_recommendation_output_schema
+from app.prompts.schema_recommendation import build_schema_recommendation_prompt as _build_schema_recommendation_prompt
 from app.prompts.structured_output import StructuredOutputSpec
+from app.prompts.table import TABLE_RECOMMENDATION_PROMPT, TABLE_SYSTEM_PROMPT
+from app.prompts.table import build_table_prompt as _build_table_prompt
+from app.prompts.table import build_table_recommendation_prompt as _build_table_recommendation_prompt
+from app.prompts.table import strip_length_keywords as _strip_length_keywords
+from app.prompts.table import table_output_schema as _table_output_schema
+from app.prompts.table import table_recommendation_output_schema as _table_recommendation_output_schema
 from app.schemas import ClassCandidate, FieldDefinition, RequiredFieldItem, SchemaRegion
 from app.storage import read_storage_bytes, storage_ref_name
 from app.vlm_params import VlmInferenceParamError, VlmInferenceParams
-
 
 SYSTEM_PROMPT = KIE_SYSTEM_PROMPT
 
@@ -217,7 +226,20 @@ def _is_retryable_vlm_error(exc: VlmRuntimeError) -> bool:
 
 
 def _vlm_retry_delay_seconds(attempt: int) -> float:
-    return min(4.0, 0.5 * (2 ** attempt))
+    return min(4.0, 0.5 * (2**attempt))
+
+
+_SCHEMA_REJECTION_HINTS = ("invalid", "unsupported", "not supported", "not permitted", "not allowed", "unknown")
+
+
+def _is_schema_keyword_rejection(exc: VlmRuntimeError) -> bool:
+    """The provider refused the response schema (e.g. ``minItems`` is not a permitted keyword)."""
+    if exc.code != "VLM_PROVIDER_REQUEST_FAILED":
+        return False
+    text = f"{exc.message} {exc.hint or ''}".lower()
+    if "minitems" in text or "maxitems" in text:
+        return True
+    return ("schema" in text or "response_format" in text) and any(hint in text for hint in _SCHEMA_REJECTION_HINTS)
 
 
 def format_vlm_exception(exc: Exception) -> str:
@@ -226,275 +248,344 @@ def format_vlm_exception(exc: Exception) -> str:
     return str(exc)
 
 
-def extract_with_vlm(
-    fields: list[FieldDefinition],
-    image_paths: list[str] | None = None,
-    image_inputs: list[dict[str, str]] | None = None,
-) -> dict[str, Any]:
+class VlmGateway(Protocol):
+    """Semantic VLM operations used by the app.
+
+    This is the single seam between the application and the model provider. Job
+    runners and request handlers call ``get_vlm_gateway()`` and never pick a
+    provider themselves; tests swap the whole gateway with ``set_vlm_gateway()``.
+    """
+
+    async def extract(
+        self,
+        fields: list[FieldDefinition],
+        image_paths: list[str] | None = None,
+        image_inputs: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]: ...
+
+    async def judge_extraction(
+        self,
+        field: FieldDefinition,
+        initial_value: Any,
+        initial_evidence: str | None,
+        image_inputs: list[dict[str, str]],
+    ) -> dict[str, Any]: ...
+
+    async def correct_extraction(
+        self,
+        field: FieldDefinition,
+        initial_value: Any,
+        initial_evidence: str | None,
+        judgement_reason: str | None,
+        image_inputs: list[dict[str, str]],
+    ) -> dict[str, Any]: ...
+
+    async def classify_document(
+        self,
+        classes: list[ClassCandidate],
+        allow_unknown: bool,
+        image_paths: list[str],
+    ) -> dict[str, Any]: ...
+
+    async def check_required_fields(
+        self,
+        items: list[RequiredFieldItem],
+        regions: list[SchemaRegion],
+        image_paths: list[str] | None = None,
+        image_inputs: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]: ...
+
+    async def detect_page_orientation(self, candidate_inputs: list[dict[str, str]]) -> dict[str, Any]: ...
+
+    async def extract_table(self, table: TableSpec, image_inputs: list[dict[str, str]], *, has_region_crop: bool) -> dict[str, Any]:
+        """Transcribe one table: ``{"headers_seen": [...], "rows": [{source_line, y_center, cells: [{raw, conf}] × N}], "notes"}``."""
+        ...
+
+    def recommend_schema(self, image_paths: list[str]) -> dict[str, Any]: ...
+
+    def recommend_table(self, image_inputs: list[dict[str, str]], *, table_description: str | None, has_region_crop: bool) -> dict[str, Any]:
+        """Draft one TableSpec from a table crop: ``{name, key, description, columns, end_hint, row_unit_hint, row_count_guess, reasoning}``."""
+        ...
+
+    def recommend_schema_description(
+        self,
+        image_paths: list[str] | None = None,
+        *,
+        schema_name: str,
+        current_description: str | None,
+        fields: list[FieldDefinition],
+    ) -> dict[str, Any]: ...
+
+    def recommend_required_field_checklist(self, image_paths: list[str]) -> dict[str, Any]: ...
+
+
+def _provider_api_style() -> str:
     settings = get_settings()
     api_style = resolve_vlm_api_style(settings)
-    if api_style == "mock":
+    _ensure_vlm_credentials(settings)
+    return api_style
+
+
+class ProviderVlmGateway:
+    """Calls the configured OpenAI-compatible or Google GenAI provider with retry and slot limits."""
+
+    async def extract(
+        self,
+        fields: list[FieldDefinition],
+        image_paths: list[str] | None = None,
+        image_inputs: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]:
+        api_style = _provider_api_style()
+        inputs = image_inputs or _image_inputs_from_paths(image_paths or [])
+        return await _invoke_vlm_with_limit_async(
+            SYSTEM_PROMPT,
+            _build_user_prompt(fields),
+            inputs,
+            build_structured_output_schema(fields),
+            api_style,
+        )
+
+    async def judge_extraction(
+        self,
+        field: FieldDefinition,
+        initial_value: Any,
+        initial_evidence: str | None,
+        image_inputs: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        api_style = _provider_api_style()
+        return await _invoke_vlm_with_limit_async(
+            SYSTEM_PROMPT,
+            _build_kie_judgement_prompt(field, initial_value, initial_evidence),
+            image_inputs,
+            _kie_judgement_output_schema(),
+            api_style,
+        )
+
+    async def correct_extraction(
+        self,
+        field: FieldDefinition,
+        initial_value: Any,
+        initial_evidence: str | None,
+        judgement_reason: str | None,
+        image_inputs: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        api_style = _provider_api_style()
+        return await _invoke_vlm_with_limit_async(
+            SYSTEM_PROMPT,
+            _build_kie_correction_prompt(field, initial_value, initial_evidence, judgement_reason),
+            image_inputs,
+            _kie_correction_output_schema(field),
+            api_style,
+        )
+
+    async def classify_document(
+        self,
+        classes: list[ClassCandidate],
+        allow_unknown: bool,
+        image_paths: list[str],
+    ) -> dict[str, Any]:
+        api_style = _provider_api_style()
+        return await _invoke_vlm_with_limit_async(
+            DOCUMENT_CLASSIFIER_PROMPT,
+            _build_classification_prompt(classes, allow_unknown),
+            _image_inputs_from_paths(image_paths),
+            _classification_output_schema(classes, allow_unknown),
+            api_style,
+        )
+
+    async def check_required_fields(
+        self,
+        items: list[RequiredFieldItem],
+        regions: list[SchemaRegion],
+        image_paths: list[str] | None = None,
+        image_inputs: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]:
+        api_style = _provider_api_style()
+        inputs = image_inputs or _image_inputs_from_paths(image_paths or [])
+        return await _invoke_vlm_with_limit_async(
+            REQUIRED_FIELD_CHECKER_PROMPT,
+            _build_required_field_prompt(items, regions),
+            inputs,
+            _required_field_output_schema(items),
+            api_style,
+        )
+
+    async def detect_page_orientation(self, candidate_inputs: list[dict[str, str]]) -> dict[str, Any]:
+        """Ask the VLM which of the labeled A-D candidates of one page is upright."""
+        api_style = _provider_api_style()
+        return await _invoke_vlm_with_limit_async(
+            PAGE_ORIENTATION_PROMPT,
+            _build_orientation_prompt(),
+            candidate_inputs,
+            _page_orientation_output_spec(),
+            api_style,
+        )
+
+    async def extract_table(self, table: TableSpec, image_inputs: list[dict[str, str]], *, has_region_crop: bool) -> dict[str, Any]:
+        """One call per table, validated leniently.
+
+        The output schema is a plain JSON-schema dict (``minItems``/``maxItems`` on ``cells`` as
+        guidance), so every provider path returns a plain dict without length validation and a
+        wrong-length row is flagged by the server normalization instead of failing the table.
+        A provider that rejects the length keywords is retried once without them.
+        """
+        api_style = _provider_api_style()
+        prompt = _build_table_prompt(table, has_region_crop=has_region_crop)
+        schema = _table_output_schema(table)
+        try:
+            output = await _invoke_vlm_with_limit_async(TABLE_SYSTEM_PROMPT, prompt, image_inputs, schema, api_style)
+        except VlmRuntimeError as exc:
+            if not _is_schema_keyword_rejection(exc):
+                raise
+            output = await _invoke_vlm_with_limit_async(TABLE_SYSTEM_PROMPT, prompt, image_inputs, _strip_length_keywords(schema), api_style)
+        if not isinstance(output, dict):
+            raise VlmRuntimeError("VLM_RESPONSE_UNSUPPORTED", "VLM returned an unsupported structured response.")
+        return output
+
+    def recommend_schema(self, image_paths: list[str]) -> dict[str, Any]:
+        api_style = _provider_api_style()
+        return _invoke_vlm_with_limit(
+            SCHEMA_RECOMMENDATION_PROMPT,
+            _build_schema_recommendation_prompt(),
+            _image_inputs_from_paths(image_paths),
+            _schema_recommendation_output_schema(),
+            api_style,
+        )
+
+    def recommend_table(self, image_inputs: list[dict[str, str]], *, table_description: str | None, has_region_crop: bool) -> dict[str, Any]:
+        api_style = _provider_api_style()
+        return _invoke_vlm_with_limit(
+            TABLE_RECOMMENDATION_PROMPT,
+            _build_table_recommendation_prompt(table_description=table_description, has_region_crop=has_region_crop),
+            image_inputs,
+            _table_recommendation_output_schema(),
+            api_style,
+        )
+
+    def recommend_schema_description(
+        self,
+        image_paths: list[str] | None = None,
+        *,
+        schema_name: str,
+        current_description: str | None,
+        fields: list[FieldDefinition],
+    ) -> dict[str, Any]:
+        api_style = _provider_api_style()
+        return _invoke_vlm_with_limit(
+            SCHEMA_DESCRIPTION_PROMPT,
+            _build_schema_description_prompt(schema_name, current_description, fields),
+            [],
+            _schema_description_output_schema(),
+            api_style,
+        )
+
+    def recommend_required_field_checklist(self, image_paths: list[str]) -> dict[str, Any]:
+        api_style = _provider_api_style()
+        return _invoke_vlm_with_limit(
+            REQUIRED_FIELD_CHECKLIST_RECOMMENDATION_PROMPT,
+            _build_required_field_checklist_recommendation_prompt(),
+            _image_inputs_from_paths(image_paths),
+            _required_field_checklist_recommendation_output_schema(),
+            api_style,
+        )
+
+
+class MockVlmGateway:
+    """Deterministic offline responses used when ``VLM_PROVIDER=mock`` (local demo and tests)."""
+
+    async def extract(
+        self,
+        fields: list[FieldDefinition],
+        image_paths: list[str] | None = None,
+        image_inputs: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]:
         return _mock_extraction(fields)
 
-    _ensure_vlm_credentials(settings)
+    async def judge_extraction(
+        self,
+        field: FieldDefinition,
+        initial_value: Any,
+        initial_evidence: str | None,
+        image_inputs: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        return _mock_extraction_judgement(field)
 
-    prompt = _build_user_prompt(fields)
-    inputs = image_inputs or _image_inputs_from_paths(image_paths or [])
-    return _invoke_vlm_with_limit(SYSTEM_PROMPT, prompt, inputs, build_structured_output_schema(fields), api_style)
+    async def correct_extraction(
+        self,
+        field: FieldDefinition,
+        initial_value: Any,
+        initial_evidence: str | None,
+        judgement_reason: str | None,
+        image_inputs: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        return _mock_extraction_correction(field, initial_value, initial_evidence)
 
+    async def classify_document(
+        self,
+        classes: list[ClassCandidate],
+        allow_unknown: bool,
+        image_paths: list[str],
+    ) -> dict[str, Any]:
+        return _mock_classification(classes, allow_unknown)
 
-async def extract_with_vlm_async(
-    fields: list[FieldDefinition],
-    image_paths: list[str] | None = None,
-    image_inputs: list[dict[str, str]] | None = None,
-) -> dict[str, Any]:
-    settings = get_settings()
-    api_style = resolve_vlm_api_style(settings)
-    if api_style == "mock":
-        return _mock_extraction(fields)
+    async def check_required_fields(
+        self,
+        items: list[RequiredFieldItem],
+        regions: list[SchemaRegion],
+        image_paths: list[str] | None = None,
+        image_inputs: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]:
+        return _mock_required_field_check(items)
 
-    _ensure_vlm_credentials(settings)
+    async def detect_page_orientation(self, candidate_inputs: list[dict[str, str]]) -> dict[str, Any]:
+        return _mock_page_orientation()
 
-    prompt = _build_user_prompt(fields)
-    inputs = image_inputs or _image_inputs_from_paths(image_paths or [])
-    return await _invoke_vlm_with_limit_async(SYSTEM_PROMPT, prompt, inputs, build_structured_output_schema(fields), api_style)
+    async def extract_table(self, table: TableSpec, image_inputs: list[dict[str, str]], *, has_region_crop: bool) -> dict[str, Any]:
+        return _mock_table_extraction(table)
 
+    def recommend_table(self, image_inputs: list[dict[str, str]], *, table_description: str | None, has_region_crop: bool) -> dict[str, Any]:
+        return _mock_table_recommendation(table_description)
 
-def recommend_schema_with_vlm(image_paths: list[str]) -> dict[str, Any]:
-    settings = get_settings()
-    api_style = resolve_vlm_api_style(settings)
-    if api_style == "mock":
+    def recommend_schema(self, image_paths: list[str]) -> dict[str, Any]:
         return _mock_schema_recommendation()
 
-    _ensure_vlm_credentials(settings)
-
-    prompt = _build_schema_recommendation_prompt()
-    return _invoke_vlm_with_limit(
-        SCHEMA_RECOMMENDATION_PROMPT,
-        prompt,
-        _image_inputs_from_paths(image_paths),
-        _schema_recommendation_output_schema(),
-        api_style,
-    )
-
-
-def recommend_schema_description_with_vlm(
-    image_paths: list[str] | None = None,
-    *,
-    schema_name: str,
-    current_description: str | None,
-    fields: list[FieldDefinition],
-) -> dict[str, Any]:
-    settings = get_settings()
-    api_style = resolve_vlm_api_style(settings)
-    if api_style == "mock":
+    def recommend_schema_description(
+        self,
+        image_paths: list[str] | None = None,
+        *,
+        schema_name: str,
+        current_description: str | None,
+        fields: list[FieldDefinition],
+    ) -> dict[str, Any]:
         return _mock_schema_description_recommendation(schema_name, fields)
 
-    _ensure_vlm_credentials(settings)
-
-    prompt = _build_schema_description_prompt(schema_name, current_description, fields)
-    return _invoke_vlm_with_limit(
-        SCHEMA_DESCRIPTION_PROMPT,
-        prompt,
-        [],
-        _schema_description_output_schema(),
-        api_style,
-    )
-
-
-def classify_document_with_vlm(
-    classes: list[ClassCandidate],
-    allow_unknown: bool,
-    image_paths: list[str],
-) -> dict[str, Any]:
-    settings = get_settings()
-    api_style = resolve_vlm_api_style(settings)
-    if api_style == "mock":
-        return _mock_classification(classes, allow_unknown)
-
-    _ensure_vlm_credentials(settings)
-    prompt = _build_classification_prompt(classes, allow_unknown)
-    return _invoke_vlm_with_limit(
-        DOCUMENT_CLASSIFIER_PROMPT,
-        prompt,
-        _image_inputs_from_paths(image_paths),
-        _classification_output_schema(classes, allow_unknown),
-        api_style,
-    )
-
-
-async def classify_document_with_vlm_async(
-    classes: list[ClassCandidate],
-    allow_unknown: bool,
-    image_paths: list[str],
-) -> dict[str, Any]:
-    settings = get_settings()
-    api_style = resolve_vlm_api_style(settings)
-    if api_style == "mock":
-        return _mock_classification(classes, allow_unknown)
-
-    _ensure_vlm_credentials(settings)
-    prompt = _build_classification_prompt(classes, allow_unknown)
-    return await _invoke_vlm_with_limit_async(
-        DOCUMENT_CLASSIFIER_PROMPT,
-        prompt,
-        _image_inputs_from_paths(image_paths),
-        _classification_output_schema(classes, allow_unknown),
-        api_style,
-    )
-
-
-def check_required_fields_with_vlm(
-    items: list[RequiredFieldItem],
-    regions: list[SchemaRegion],
-    image_paths: list[str] | None = None,
-    image_inputs: list[dict[str, str]] | None = None,
-) -> dict[str, Any]:
-    settings = get_settings()
-    api_style = resolve_vlm_api_style(settings)
-    if api_style == "mock":
-        return _mock_required_field_check(items)
-
-    _ensure_vlm_credentials(settings)
-    prompt = _build_required_field_prompt(items, regions)
-    inputs = image_inputs or _image_inputs_from_paths(image_paths or [])
-    return _invoke_vlm_with_limit(
-        REQUIRED_FIELD_CHECKER_PROMPT,
-        prompt,
-        inputs,
-        _required_field_output_schema(items),
-        api_style,
-    )
-
-
-async def check_required_fields_with_vlm_async(
-    items: list[RequiredFieldItem],
-    regions: list[SchemaRegion],
-    image_paths: list[str] | None = None,
-    image_inputs: list[dict[str, str]] | None = None,
-) -> dict[str, Any]:
-    settings = get_settings()
-    api_style = resolve_vlm_api_style(settings)
-    if api_style == "mock":
-        return _mock_required_field_check(items)
-
-    _ensure_vlm_credentials(settings)
-    prompt = _build_required_field_prompt(items, regions)
-    inputs = image_inputs or _image_inputs_from_paths(image_paths or [])
-    return await _invoke_vlm_with_limit_async(
-        REQUIRED_FIELD_CHECKER_PROMPT,
-        prompt,
-        inputs,
-        _required_field_output_schema(items),
-        api_style,
-    )
-
-
-def judge_extraction_with_vlm(
-    field: FieldDefinition,
-    initial_value: Any,
-    initial_evidence: str | None,
-    image_inputs: list[dict[str, str]],
-) -> dict[str, Any]:
-    settings = get_settings()
-    api_style = resolve_vlm_api_style(settings)
-    if api_style == "mock":
-        return _mock_extraction_judgement(field)
-
-    _ensure_vlm_credentials(settings)
-    prompt = _build_kie_judgement_prompt(field, initial_value, initial_evidence)
-    return _invoke_vlm_with_limit(
-        SYSTEM_PROMPT,
-        prompt,
-        image_inputs,
-        _kie_judgement_output_schema(),
-        api_style,
-    )
-
-
-async def judge_extraction_with_vlm_async(
-    field: FieldDefinition,
-    initial_value: Any,
-    initial_evidence: str | None,
-    image_inputs: list[dict[str, str]],
-) -> dict[str, Any]:
-    settings = get_settings()
-    api_style = resolve_vlm_api_style(settings)
-    if api_style == "mock":
-        return _mock_extraction_judgement(field)
-
-    _ensure_vlm_credentials(settings)
-    prompt = _build_kie_judgement_prompt(field, initial_value, initial_evidence)
-    return await _invoke_vlm_with_limit_async(
-        SYSTEM_PROMPT,
-        prompt,
-        image_inputs,
-        _kie_judgement_output_schema(),
-        api_style,
-    )
-
-
-def correct_extraction_with_vlm(
-    field: FieldDefinition,
-    initial_value: Any,
-    initial_evidence: str | None,
-    judgement_reason: str | None,
-    image_inputs: list[dict[str, str]],
-) -> dict[str, Any]:
-    settings = get_settings()
-    api_style = resolve_vlm_api_style(settings)
-    if api_style == "mock":
-        return _mock_extraction_correction(field, initial_value, initial_evidence)
-
-    _ensure_vlm_credentials(settings)
-    prompt = _build_kie_correction_prompt(field, initial_value, initial_evidence, judgement_reason)
-    return _invoke_vlm_with_limit(
-        SYSTEM_PROMPT,
-        prompt,
-        image_inputs,
-        _kie_correction_output_schema(field),
-        api_style,
-    )
-
-
-async def correct_extraction_with_vlm_async(
-    field: FieldDefinition,
-    initial_value: Any,
-    initial_evidence: str | None,
-    judgement_reason: str | None,
-    image_inputs: list[dict[str, str]],
-) -> dict[str, Any]:
-    settings = get_settings()
-    api_style = resolve_vlm_api_style(settings)
-    if api_style == "mock":
-        return _mock_extraction_correction(field, initial_value, initial_evidence)
-
-    _ensure_vlm_credentials(settings)
-    prompt = _build_kie_correction_prompt(field, initial_value, initial_evidence, judgement_reason)
-    return await _invoke_vlm_with_limit_async(
-        SYSTEM_PROMPT,
-        prompt,
-        image_inputs,
-        _kie_correction_output_schema(field),
-        api_style,
-    )
-
-
-def recommend_required_field_checklist_with_vlm(image_paths: list[str]) -> dict[str, Any]:
-    settings = get_settings()
-    api_style = resolve_vlm_api_style(settings)
-    if api_style == "mock":
+    def recommend_required_field_checklist(self, image_paths: list[str]) -> dict[str, Any]:
         return _mock_required_field_checklist_recommendation()
 
-    _ensure_vlm_credentials(settings)
-    prompt = _build_required_field_checklist_recommendation_prompt()
-    return _invoke_vlm_with_limit(
-        REQUIRED_FIELD_CHECKLIST_RECOMMENDATION_PROMPT,
-        prompt,
-        _image_inputs_from_paths(image_paths),
-        _required_field_checklist_recommendation_output_schema(),
-        api_style,
-    )
+
+_PROVIDER_GATEWAY = ProviderVlmGateway()
+_MOCK_GATEWAY = MockVlmGateway()
+_gateway_override: VlmGateway | None = None
+
+
+def default_vlm_gateway() -> VlmGateway:
+    """The gateway selected by the current settings (mock or the real provider)."""
+    try:
+        api_style = resolve_vlm_api_style()
+    except VlmRuntimeError:
+        # Let the provider gateway raise the configuration error at call time, inside the job's error handling.
+        return _PROVIDER_GATEWAY
+    return _MOCK_GATEWAY if api_style == "mock" else _PROVIDER_GATEWAY
+
+
+def get_vlm_gateway() -> VlmGateway:
+    return _gateway_override if _gateway_override is not None else default_vlm_gateway()
+
+
+def set_vlm_gateway(gateway: VlmGateway | None) -> None:
+    """Install a process-wide gateway (tests, alternative adapters). ``None`` restores settings-based selection."""
+    global _gateway_override
+    _gateway_override = gateway
 
 
 def resolve_vlm_api_style(settings=None) -> str:
@@ -548,8 +639,7 @@ class VlmClient(Protocol):
         prompt: str,
         image_inputs: list[dict[str, str]],
         output_schema: dict[str, Any] | StructuredOutputSpec,
-    ) -> dict[str, Any]:
-        ...
+    ) -> dict[str, Any]: ...
 
     async def ainvoke(
         self,
@@ -557,8 +647,7 @@ class VlmClient(Protocol):
         prompt: str,
         image_inputs: list[dict[str, str]],
         output_schema: dict[str, Any] | StructuredOutputSpec,
-    ) -> dict[str, Any]:
-        ...
+    ) -> dict[str, Any]: ...
 
 
 class OpenAiCompatibleVlmClient:
@@ -658,7 +747,9 @@ async def _invoke_structured_llm_with_timeout_async(
         ) from exc
 
 
-def _invoke_openai_compatible(system_prompt: str, content: list[dict[str, Any]], output_schema: dict[str, Any] | StructuredOutputSpec) -> dict[str, Any]:
+def _invoke_openai_compatible(
+    system_prompt: str, content: list[dict[str, Any]], output_schema: dict[str, Any] | StructuredOutputSpec
+) -> dict[str, Any]:
     from langchain_core.messages import HumanMessage, SystemMessage
     from langchain_openai import ChatOpenAI
 
@@ -687,19 +778,40 @@ def _invoke_openai_compatible(system_prompt: str, content: list[dict[str, Any]],
     raise VlmRuntimeError("VLM_RESPONSE_UNSUPPORTED", "VLM returned an unsupported structured response.")
 
 
-async def _invoke_openai_compatible_async(system_prompt: str, content: list[dict[str, Any]], output_schema: dict[str, Any] | StructuredOutputSpec) -> dict[str, Any]:
-    from langchain_core.messages import HumanMessage, SystemMessage
+@asynccontextmanager
+async def _openai_compatible_llm_async():
+    """Yield a ChatOpenAI whose HTTP pool belongs to the running event loop.
+
+    langchain_openai shares one process-wide httpx.AsyncClient by default, but
+    VLM calls run on more than one event loop (the job runtime's loop, request
+    handlers, inline test runs). Pooled connections left over from another or a
+    finished loop surface as "Event loop is closed" errors or requests that hang
+    until the VLM timeout.
+    """
+    import httpx
     from langchain_openai import ChatOpenAI
 
-    llm = ChatOpenAI(**_build_llm_kwargs())
-    structured_llm = llm.with_structured_output(
-        _openai_structured_output_schema(output_schema),
-        method="json_schema",
-        strict=True,
-    )
+    llm_kwargs = _build_llm_kwargs()
+    # Retries are owned by _invoke_vlm_with_limit_async; SDK retries would run
+    # inside the same wait_for() budget and only hide the real failure.
+    llm_kwargs["max_retries"] = 0
+    async with httpx.AsyncClient(timeout=llm_kwargs["timeout"]) as http_async_client:
+        yield ChatOpenAI(**llm_kwargs, http_async_client=http_async_client)
+
+
+async def _invoke_openai_compatible_async(
+    system_prompt: str, content: list[dict[str, Any]], output_schema: dict[str, Any] | StructuredOutputSpec
+) -> dict[str, Any]:
+    from langchain_core.messages import HumanMessage, SystemMessage
 
     try:
-        response = await structured_llm.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=content)])
+        async with _openai_compatible_llm_async() as llm:
+            structured_llm = llm.with_structured_output(
+                _openai_structured_output_schema(output_schema),
+                method="json_schema",
+                strict=True,
+            )
+            response = await structured_llm.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=content)])
     except VlmRuntimeError:
         raise
     except Exception as exc:
@@ -728,7 +840,9 @@ def _invoke_openai_compatible_raw_json(
     llm = ChatOpenAI(**_build_llm_kwargs())
     content = _build_multimodal_content(_local_json_prompt(prompt, output_schema), image_inputs)
     try:
-        response = llm.invoke([SystemMessage(content=_local_json_system_prompt(system_prompt, output_schema)), HumanMessage(content=content)])
+        response = llm.invoke(
+            [SystemMessage(content=_local_json_system_prompt(system_prompt, output_schema)), HumanMessage(content=content)]
+        )
     except VlmRuntimeError:
         raise
     except Exception as exc:
@@ -746,12 +860,13 @@ async def _invoke_openai_compatible_raw_json_async(
     output_schema: dict[str, Any] | StructuredOutputSpec,
 ) -> dict[str, Any]:
     from langchain_core.messages import HumanMessage, SystemMessage
-    from langchain_openai import ChatOpenAI
 
-    llm = ChatOpenAI(**_build_llm_kwargs())
     content = await asyncio.to_thread(_build_multimodal_content, _local_json_prompt(prompt, output_schema), image_inputs)
     try:
-        response = await llm.ainvoke([SystemMessage(content=_local_json_system_prompt(system_prompt, output_schema)), HumanMessage(content=content)])
+        async with _openai_compatible_llm_async() as llm:
+            response = await llm.ainvoke(
+                [SystemMessage(content=_local_json_system_prompt(system_prompt, output_schema)), HumanMessage(content=content)]
+            )
     except VlmRuntimeError:
         raise
     except Exception as exc:
@@ -919,7 +1034,9 @@ def _local_json_system_prompt(system_prompt: str, output_schema: dict[str, Any] 
 
 
 def _local_json_prompt(prompt: str, output_schema: dict[str, Any] | StructuredOutputSpec) -> str:
-    title = output_schema.title if isinstance(output_schema, StructuredOutputSpec) else str(output_schema.get("title") or "StructuredOutput")
+    title = (
+        output_schema.title if isinstance(output_schema, StructuredOutputSpec) else str(output_schema.get("title") or "StructuredOutput")
+    )
     return "\n".join(
         [
             prompt,
@@ -1135,6 +1252,54 @@ def _mock_extraction(fields: list[FieldDefinition]) -> dict[str, Any]:
     return values
 
 
+def _mock_table_cell(column: Any, row: int) -> str:
+    if column.type == "number":
+        return ["12", "3.5"][row - 1]
+    if column.type == "date":
+        return f"2026-10-0{row}"
+    if column.type == "time":
+        return ["08:30", "13:05"][row - 1]
+    if column.type == "choice":
+        return column.choices[0] if column.choices else str(row)
+    if column.type == "checkbox":
+        return column.checkbox_options[0] if column.checkbox_options else f"B{row}"
+    return f"{column.key} {row}"
+
+
+def _mock_table_extraction(table: TableSpec) -> dict[str, Any]:
+    """Two deterministic data rows that match the table definition (column count and types)."""
+    return {
+        "headers_seen": [column.header_path[-1] if column.header_path else column.key for column in table.columns],
+        "rows": [
+            {
+                "source_line": row,
+                "y_center": round((row - 0.5) / 2, 4),
+                "cells": [{"raw": _mock_table_cell(column, row), "conf": 0.9} for column in table.columns],
+            }
+            for row in (1, 2)
+        ],
+        "notes": None,
+    }
+
+
+def _mock_table_recommendation(table_description: str | None) -> dict[str, Any]:
+    """Deterministic three-column draft (text / number / date)."""
+    return {
+        "name": "작업 내역",
+        "key": "work_rows",
+        "description": table_description or "한 행 = 작업 1건",
+        "columns": [
+            {"key": "품명", "header_path": ["품명"], "type": "text", "description": "제품 이름", "choices": [], "checkbox_options": []},
+            {"key": "수량", "header_path": ["실적", "수량"], "type": "number", "description": "숫자", "choices": [], "checkbox_options": []},
+            {"key": "작업일", "header_path": ["작업일"], "type": "date", "description": None, "choices": [], "checkbox_options": []},
+        ],
+        "end_hint": "'합계' 줄 위까지",
+        "row_unit_hint": None,
+        "row_count_guess": 10,
+        "reasoning": "Mock recommendation with three fixed columns.",
+    }
+
+
 def _mock_extraction_judgement(field: FieldDefinition) -> dict[str, Any]:
     return {
         "judgement_status": "correct",
@@ -1200,6 +1365,14 @@ def _mock_schema_description_recommendation(schema_name: str, fields: list[Field
     }
 
 
+def _mock_page_orientation() -> dict[str, Any]:
+    return {
+        "upright_candidate": "A",
+        "confidence": 0.9,
+        "reason": "Mock mode keeps the page orientation unchanged.",
+    }
+
+
 def _mock_classification(classes: list[ClassCandidate], allow_unknown: bool) -> dict[str, Any]:
     if classes:
         selected = classes[0]
@@ -1222,7 +1395,7 @@ def _mock_classification(classes: list[ClassCandidate], allow_unknown: bool) -> 
 def _mock_required_field_check(items: list[RequiredFieldItem]) -> dict[str, Any]:
     checked_items = []
     missing_required = False
-    for index, item in enumerate(items):
+    for item in items:
         name = item.item_name.lower()
         status = "uncertain" if item.evidence_type == "checkbox" or "체크" in name or "checkbox" in name else "present"
         if item.required and status != "present":

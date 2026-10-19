@@ -1,5 +1,5 @@
+from app.application.vlm_settings import inference_params_from_settings_payload
 from app.schemas import VlmSettingsUpdate
-from app.services.vlm_settings import inference_params_from_settings_payload
 
 
 def test_inference_params_payload_uses_structured_values_as_source_of_truth() -> None:

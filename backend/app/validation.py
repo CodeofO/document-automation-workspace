@@ -5,7 +5,6 @@ from typing import Any
 from app.domain.schema_definition import FieldDefinitionValue
 from app.schemas import FieldDefinition
 
-
 LOW_CONFIDENCE_THRESHOLD = 0.75
 
 

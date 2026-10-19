@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from app.domain.status import ClassificationOutcome
 
-WORKFLOW_NODE_KINDS = {"input", "classifier", "branch", "kie", "required-checker", "merge", "export"}
+WORKFLOW_NODE_KINDS = {"input", "rotation", "classifier", "branch", "kie", "table", "required-checker", "merge", "export"}
 
 
 @dataclass(frozen=True)
@@ -16,15 +17,6 @@ class WorkflowGraph:
     incoming: dict[str, list[dict[str, Any]]]
     warnings: list[str]
 
-    def with_warnings(self, warnings: list[str]) -> "WorkflowGraph":
-        return WorkflowGraph(
-            definition=self.definition,
-            nodes=self.nodes,
-            edges=self.edges,
-            outgoing=self.outgoing,
-            incoming=self.incoming,
-            warnings=warnings,
-        )
 
 
 def build_workflow_graph(definition: dict[str, Any]) -> WorkflowGraph:
@@ -129,6 +121,10 @@ def node_kind(node: dict[str, Any]) -> str:
         "key-info": "kie",
         "required": "required-checker",
         "required_field_checker": "required-checker",
+        "rotation-correction": "rotation",
+        "rotation_correction": "rotation",
+        "table-extraction": "table",
+        "table_extraction": "table",
     }
     return aliases.get(str(kind), str(kind))
 
@@ -144,6 +140,21 @@ def node_config_value(node: dict[str, Any], key: str) -> str | None:
     config = data.get("config") if isinstance(data.get("config"), dict) else {}
     value = config.get(key) or data.get(key) or node.get(key)
     return str(value).strip() if value else None
+
+
+def node_config_list(node: dict[str, Any], key: str) -> list[str] | None:
+    """A list config value (e.g. a table node's ``table_keys``); ``None`` when unset or empty."""
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    config = data.get("config") if isinstance(data.get("config"), dict) else {}
+    value = config.get(key, data.get(key, node.get(key)))
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return None
+    items = [str(item).strip() for item in value if item is not None and str(item).strip()]
+    return items or None
 
 
 def single_node_id(graph: WorkflowGraph, kind: str) -> str:
@@ -180,7 +191,7 @@ def branch_candidate_keys(node_results: dict[str, Any]) -> list[str]:
     status = classification.get("status")
     class_name = classification.get("class_name")
     candidates: list[str] = []
-    if status == "classified" and class_name:
+    if status == ClassificationOutcome.CLASSIFIED and class_name:
         candidates.append(f"class:{class_name}")
     else:
         candidates.append("unknown")
@@ -213,9 +224,13 @@ def workflow_summary(node_results: dict[str, Any], branch_path: str | None) -> d
     kie_values: dict[str, Any] = {}
     required_items: dict[str, Any] = {}
     required_overall: str | None = None
+    rotation_corrections: list[dict[str, int]] | None = None
     for result in node_results.values():
         if not isinstance(result, dict):
             continue
+        if result.get("kind") == "rotation":
+            rotation_corrections = rotation_corrections or []
+            rotation_corrections.extend(applied_rotation_corrections(result))
         if result.get("kind") == "kie" and isinstance(result.get("values"), dict):
             for key, value in result["values"].items():
                 kie_values[key] = value
@@ -224,10 +239,24 @@ def workflow_summary(node_results: dict[str, Any], branch_path: str | None) -> d
             for item in result["required_check"].get("items", []):
                 if isinstance(item, dict) and item.get("item_name"):
                     required_items[item["item_name"]] = item
-    return {
+    summary: dict[str, Any] = {
         "classification": classification,
         "branch_path": branch_path,
         "kie_values": kie_values,
         "required_overall_status": required_overall,
         "required_items": required_items,
     }
+    if rotation_corrections is not None:
+        # Only workflows that ran a rotation node carry these keys.
+        summary["rotation_corrected_page_count"] = len(rotation_corrections)
+        summary["rotation_corrections"] = rotation_corrections
+    return summary
+
+
+def applied_rotation_corrections(result: dict[str, Any]) -> list[dict[str, int]]:
+    pages = result.get("pages") if isinstance(result.get("pages"), list) else []
+    return [
+        {"page_number": int(page["page_number"]), "correction": int(page.get("correction") or 0)}
+        for page in pages
+        if isinstance(page, dict) and page.get("applied") and page.get("page_number") is not None
+    ]

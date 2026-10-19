@@ -1,0 +1,131 @@
+/* features/export-jobs: Export 이력 + 공용 모달 기본 모양. 토큰만 쓴다. */
+
+.export-history-head {
+  align-items: center;
+  border-bottom: 1px solid var(--tds-gray-200);
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 8px 10px;
+}
+
+.export-history-head strong {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.export-history-list {
+  display: grid;
+  gap: 6px;
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.export-history-row {
+  border: 1px solid var(--tds-gray-200);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+}
+
+.export-history-row:first-child {
+  background: var(--color-surface);
+  border-color: var(--tone-success-bg);
+  box-shadow: inset 3px 0 0 var(--tds-green-500);
+}
+
+.export-history-row-main {
+  align-items: flex-start;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.export-history-row-main > div:first-child {
+  min-width: 0;
+}
+
+.export-history-row-main strong {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.export-history-meta,
+.export-history-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.export-history-actions {
+  flex: 0 0 auto;
+}
+
+.export-history-meta {
+  color: var(--tds-gray-600);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.export-format-badge {
+  background: var(--tds-blue-50);
+  border: 1px solid var(--tds-blue-100);
+  border-radius: 999px;
+  color: var(--tds-blue-600);
+  font-weight: 800;
+  padding: 3px 7px;
+}
+
+.export-history-row small,
+.export-history-empty {
+  color: var(--tds-gray-600);
+  font-size: 12px;
+}
+
+.modal-backdrop {
+  align-items: center;
+  background: rgba(20, 30, 28, 0.32);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 24px;
+  position: fixed;
+  z-index: 20;
+}
+
+.modal-panel {
+  background: var(--color-surface);
+  border: 1px solid var(--tds-gray-300);
+  border-radius: 8px;
+  box-shadow: 0 24px 80px rgba(20, 30, 28, 0.25);
+  display: grid;
+  gap: 14px;
+  max-width: 760px;
+  max-height: min(720px, calc(100vh - 48px));
+  overflow: auto;
+  padding: 18px;
+  width: min(760px, 100%);
+}
+
+.settings-panel.modal-panel {
+  margin: auto;
+}
+
+.modal-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.modal-header h2 {
+  font-size: 20px;
+  margin: 0;
+}

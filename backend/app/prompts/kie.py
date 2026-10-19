@@ -8,7 +8,6 @@ from app.prompts.structured_output import (
 )
 from app.schemas import FieldDefinition
 
-
 KIE_SYSTEM_PROMPT = """You are a key information extraction engine.
 Extract only the fields defined by the schema.
 Do not return keys that are not in the schema.
@@ -121,7 +120,9 @@ def build_correction_prompt(field: FieldDefinition, initial_value: Any, initial_
     return build_full_page_correction_prompt(field, initial_value, initial_evidence, judgement_reason)
 
 
-def build_full_page_correction_prompt(field: FieldDefinition, initial_value: Any, initial_evidence: str | None, judgement_reason: str | None) -> str:
+def build_full_page_correction_prompt(
+    field: FieldDefinition, initial_value: Any, initial_evidence: str | None, judgement_reason: str | None
+) -> str:
     return "\n".join(
         [
             "You are in the second-stage KIE correction step.",
@@ -138,7 +139,9 @@ def build_full_page_correction_prompt(field: FieldDefinition, initial_value: Any
     )
 
 
-def build_region_correction_prompt(field: FieldDefinition, initial_value: Any, initial_evidence: str | None, judgement_reason: str | None) -> str:
+def build_region_correction_prompt(
+    field: FieldDefinition, initial_value: Any, initial_evidence: str | None, judgement_reason: str | None
+) -> str:
     return "\n".join(
         [
             "You are in the second-stage KIE correction step for a field with a user-defined region.",

@@ -7,7 +7,6 @@ from app.prompts.structured_output import (
 )
 from app.schemas import FieldDefinition
 
-
 SCHEMA_RECOMMENDATION_PROMPT = """You are a document schema design assistant.
 Look at the uploaded document images and recommend practical key information fields for extraction.
 Return concise key names in the document's primary language.

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
@@ -36,12 +36,6 @@ class KieJudgementOutput(StrictBaseModel):
     evidence: str | None
 
 
-class ClassificationOutput(StrictBaseModel):
-    status: Literal["classified", "unknown"]
-    class_name: str | None
-    confidence: Confidence = Field(ge=0, le=1)
-    reason: str
-    evidence: list[str]
 
 
 class SchemaFieldRecommendation(StrictBaseModel):
@@ -153,7 +147,9 @@ def required_field_output_spec(items: list[RequiredFieldItem]) -> StructuredOutp
             RequiredFieldItemCheck,
             Field(..., alias=item.item_name, description=item.description),
         )
-    items_model = create_model(_model_name("RequiredFieldItems", [item.item_name for item in items]), **item_fields, __base__=StrictBaseModel)
+    items_model = create_model(
+        _model_name("RequiredFieldItems", [item.item_name for item in items]), **item_fields, __base__=StrictBaseModel
+    )
     model = create_model(
         "RequiredFieldCheckResult",
         overall_status=(Literal["complete", "incomplete", "needs_review"], Field(...)),

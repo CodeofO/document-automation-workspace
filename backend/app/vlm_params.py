@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
-
+from typing import Any
 
 REASONING_OFF_VALUES = {"", "default", "none", "off", "false", "0", "disabled", "disable"}
 
@@ -36,7 +36,7 @@ class VlmInferenceParams:
     service_tier: str = ""
 
     @classmethod
-    def from_mapping(cls, values: Mapping[str, Any] | None) -> "VlmInferenceParams":
+    def from_mapping(cls, values: Mapping[str, Any] | None) -> VlmInferenceParams:
         params = dict(DEFAULT_VLM_INFERENCE_PARAMS)
         if values:
             params.update({key: _stringify(value) for key, value in values.items() if key in params})
@@ -51,7 +51,7 @@ class VlmInferenceParams:
         *,
         legacy_values: Mapping[str, Any] | None = None,
         legacy_temperature: float | None = None,
-    ) -> "VlmInferenceParams":
+    ) -> VlmInferenceParams:
         parsed = parse_vlm_inference_params(raw_json)
         values = dict(DEFAULT_VLM_INFERENCE_PARAMS)
         values.update(parsed)
@@ -121,10 +121,6 @@ class VlmInferenceParams:
             config["thinking_config"] = thinking_config
 
         return config
-
-
-def default_vlm_inference_params_json() -> str:
-    return VlmInferenceParams.from_mapping(None).to_env_json()
 
 
 def normalize_vlm_inference_params(values: Mapping[str, Any] | None) -> dict[str, str]:

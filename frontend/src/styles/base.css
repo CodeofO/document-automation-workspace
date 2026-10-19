@@ -1,0 +1,84 @@
+/* 전역 기본 요소 스타일 */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.visually-hidden {
+  height: 1px;
+  left: -9999px;
+  opacity: 0;
+  overflow: hidden;
+  position: absolute;
+  top: auto;
+  width: 1px;
+}
+
+body {
+  background: var(--tds-gray-50);
+  margin: 0;
+  min-width: 320px;
+  overflow: hidden;
+  overflow-x: hidden;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  align-items: center;
+  border: 1px solid var(--tds-gray-200);
+  border-radius: var(--tds-radius-sm);
+  cursor: pointer;
+  display: inline-flex;
+  gap: 8px;
+  justify-content: center;
+  min-height: 38px;
+  padding: 8px 12px;
+  text-decoration: none;
+  transition:
+    background 0.15s ease,
+    border 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+input,
+textarea,
+select {
+  background: var(--color-surface);
+  border: 1px solid var(--tds-gray-200);
+  border-radius: var(--tds-radius-sm);
+  color: var(--tds-gray-900);
+  min-width: 0;
+  padding: 9px 10px;
+  width: 100%;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--tds-blue-500);
+  box-shadow: 0 0 0 3px rgba(49, 130, 246, 0.14);
+  outline: none;
+}
+
+textarea {
+  min-height: 74px;
+  resize: vertical;
+}

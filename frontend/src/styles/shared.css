@@ -1,0 +1,204 @@
+/* 공용 기본 요소(앱 셸·상단바·버튼·모달 등). workflow 구간보다 앞에 둔다. 토큰만 쓴다. */
+
+.app-shell {
+  background: var(--tds-gray-50);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  max-width: 100vw;
+  min-height: 100vh;
+  overflow: hidden;
+  padding: 20px;
+}
+
+.topbar {
+  align-items: center;
+  border-bottom: 1px solid var(--tds-gray-200);
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  padding-bottom: 18px;
+}
+
+.topbar > div:first-child,
+.topbar-action-shell,
+.status-strip {
+  min-width: 0;
+}
+
+.topbar-action-shell {
+  position: relative;
+}
+
+.mobile-topbar-menu-button {
+  display: none;
+}
+
+.topbar h1,
+.pane-header h2 {
+  letter-spacing: 0;
+  margin: 0;
+}
+
+.topbar h1 {
+  font-size: 28px;
+}
+
+.pane-header h2 {
+  font-size: 18px;
+}
+
+.eyebrow {
+  color: var(--tds-gray-600);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  margin: 0 0 4px;
+  text-transform: uppercase;
+}
+
+.status-strip {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.help-trigger {
+  position: relative;
+}
+
+.help-button {
+  background: var(--color-surface);
+  border-radius: 999px;
+  color: var(--tds-gray-800);
+  min-height: 34px;
+  min-width: 34px;
+  padding: 7px;
+}
+
+.help-button-label {
+  display: none;
+}
+
+.help-panel {
+  background: var(--tds-gray-900);
+  border-radius: 8px;
+  box-shadow: 0 14px 34px rgba(25, 39, 38, 0.18);
+  color: var(--tds-gray-100);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  opacity: 0;
+  padding: 12px;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  transform: translateY(-4px);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+  width: 300px;
+  z-index: 10;
+}
+
+.help-panel span {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.help-trigger:hover .help-panel,
+.help-trigger:focus-within .help-panel {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.step-pill {
+  border: 1px solid var(--tds-gray-200);
+  border-radius: 999px;
+  color: var(--tds-gray-600);
+  font-size: 13px;
+  padding: 6px 10px;
+}
+
+.step-pill.active {
+  border-color: var(--tds-blue-500);
+  color: var(--tds-blue-600);
+}
+
+.step-pill.done {
+  background: var(--tds-blue-50);
+}
+
+.provider-pill {
+  border: 1px solid var(--tds-gray-200);
+  border-radius: 999px;
+  color: var(--tds-gray-700);
+  font-size: 13px;
+  padding: 6px 10px;
+}
+
+.provider-pill.mock {
+  background: var(--tone-warning-bg);
+  border-color: var(--tone-warning-bg);
+}
+
+.provider-pill.ready {
+  background: var(--tds-blue-50);
+  border-color: var(--tds-blue-200);
+  color: var(--tds-blue-700);
+}
+
+.provider-pill.warning {
+  background: var(--tone-danger-soft-bg);
+  border-color: var(--tone-danger-soft-bg);
+}
+
+.workflow-builder {
+  display: grid;
+  flex: 1;
+  gap: 14px;
+  grid-template-columns: minmax(210px, 250px) minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+  padding-top: 16px;
+  position: relative;
+}
+
+.workflow-palette,
+.workflow-canvas-shell,
+.workflow-results,
+.workflow-item-detail {
+  background: var(--color-surface);
+  border: 1px solid var(--tds-gray-200);
+  border-radius: var(--tds-radius-md);
+}
+
+.workflow-palette,
+.workflow-canvas-shell {
+  box-shadow: var(--tds-shadow-card);
+}
+
+.workflow-palette {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+}
+
+.workflow-panel-header h2,
+.workflow-results-header h2 {
+  font-size: 17px;
+  margin: 0;
+}
+
+.workflow-node-list,
+.workflow-library-shortcuts {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}

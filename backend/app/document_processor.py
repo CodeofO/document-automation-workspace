@@ -10,9 +10,8 @@ except ImportError:  # pragma: no cover - compatibility for older PyMuPDF instal
 from fastapi import UploadFile
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from app.config import get_settings
+from app.core.config import get_settings
 from app.raw_extractor import convert_office_to_pdf
-
 
 ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".docx", ".pptx"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
@@ -178,7 +177,7 @@ def _validate_file_content(path: Path, suffix: str) -> None:
 def _validate_image_content(path: Path) -> None:
     try:
         with Image.open(path) as source:
-            ImageOps.exif_transpose(source).size
+            _ = ImageOps.exif_transpose(source).size  # decode the header to validate the image
     except UnidentifiedImageError as exc:
         raise DocumentProcessingError("Uploaded file does not match a supported image format", status_code=415) from exc
     except OSError as exc:

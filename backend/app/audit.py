@@ -1,4 +1,3 @@
-import json
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -20,7 +19,7 @@ def log_audit_event(
         entity_id=entity_id,
         action=action,
         message=message,
-        metadata_json=json.dumps(metadata or {}, ensure_ascii=False),
+        metadata_json=dict(metadata or {}),
     )
     db.add(event)
     return event

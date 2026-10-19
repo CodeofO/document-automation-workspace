@@ -2,7 +2,7 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
-from app.config import get_settings
+from app.core.config import get_settings
 
 
 def is_s3_ref(ref: str | Path) -> bool:
@@ -69,10 +69,6 @@ def delete_storage_ref(ref: str | Path) -> None:
         path.unlink()
 
 
-def delete_local_tree(path: Path) -> None:
-    if path.exists():
-        shutil.rmtree(path)
-    path.mkdir(parents=True, exist_ok=True)
 
 
 def _object_key(key: str) -> str:

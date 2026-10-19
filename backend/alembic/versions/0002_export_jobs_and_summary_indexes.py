@@ -61,6 +61,11 @@ def upgrade() -> None:
     for index_name, table_name, columns in INDEX_SPECS:
         if table_name not in tables:
             continue
+        # On a database built from the frozen 0001 baseline some indexed columns only appear in
+        # 0006_job_queue (which then creates the index); skip those here.
+        existing_columns = {column["name"] for column in inspector.get_columns(table_name)}
+        if not set(columns) <= existing_columns:
+            continue
         existing_indexes = {index["name"] for index in inspector.get_indexes(table_name)}
         if index_name not in existing_indexes:
             op.create_index(index_name, table_name, columns)

@@ -3,7 +3,6 @@ from typing import Any
 from app.prompts.structured_output import required_field_output_spec
 from app.schemas import RequiredFieldItem, SchemaRegion
 
-
 REQUIRED_FIELD_CHECKER_PROMPT = """You are a required field presence checker.
 Check whether each user-defined item is visibly present, missing, uncertain, or not applicable.
 Do not validate whether a value is correct. Only decide whether the required mark, handwriting, text, signature, stamp, checkbox, or visual evidence exists.
@@ -61,4 +60,6 @@ def masked_required_region_label(region: SchemaRegion, item_names: list[str]) ->
 
 
 def cropped_required_region_label(region: SchemaRegion, item_names: list[str]) -> str:
-    return f"Cropped required field region '{region.name}' on page {region.page}. Use as primary visual evidence for: {', '.join(item_names)}."
+    return (
+        f"Cropped required field region '{region.name}' on page {region.page}. Use as primary visual evidence for: {', '.join(item_names)}."
+    )

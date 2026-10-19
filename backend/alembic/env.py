@@ -1,23 +1,26 @@
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from app.config import get_settings
-from app.database import Base
 import app.models  # noqa: F401
-
+from alembic import context
+from app.core.config import get_env_settings
+from app.core.db import Base
 
 config = context.config
-if config.config_file_name is not None:
+if config.config_file_name is not None and config.attributes.get("configure_logging", True):
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
 
 
+def _database_url() -> str:
+    return config.attributes.get("database_url") or get_env_settings().resolved_database_url
+
+
 def run_migrations_offline() -> None:
     context.configure(
-        url=get_settings().resolved_database_url,
+        url=_database_url(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -28,7 +31,7 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     configuration = config.get_section(config.config_ini_section, {})
-    configuration["sqlalchemy.url"] = get_settings().resolved_database_url
+    configuration["sqlalchemy.url"] = _database_url()
     connectable = engine_from_config(configuration, prefix="sqlalchemy.", poolclass=pool.NullPool)
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)

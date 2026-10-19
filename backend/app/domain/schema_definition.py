@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-
 OUTPUT_FORMATS = {"string", "float", "bool", "date"}
 
 
@@ -32,7 +31,7 @@ class FieldRegionValue:
             raise ValueError("region y + height must be less than or equal to 1")
 
     @classmethod
-    def from_dto(cls, dto: Any) -> "FieldRegionValue":
+    def from_dto(cls, dto: Any) -> FieldRegionValue:
         return cls(
             page=int(dto.page),
             x=float(dto.x),
@@ -55,7 +54,7 @@ class SchemaRegionValue(FieldRegionValue):
             raise ValueError("schema region name is required")
 
     @classmethod
-    def from_dto(cls, dto: Any) -> "SchemaRegionValue":
+    def from_dto(cls, dto: Any) -> SchemaRegionValue:
         return cls(
             id=str(dto.id).strip(),
             name=str(dto.name).strip(),
@@ -84,7 +83,7 @@ class FieldDefinitionValue:
             raise ValueError(f"unsupported output_format: {self.output_format}")
 
     @classmethod
-    def from_dto(cls, dto: Any) -> "FieldDefinitionValue":
+    def from_dto(cls, dto: Any) -> FieldDefinitionValue:
         region_id = getattr(dto, "region_id", None)
         return cls(
             key_name=str(dto.key_name).strip(),
@@ -107,7 +106,7 @@ class ClassCandidateValue:
             raise ValueError("class description is required")
 
     @classmethod
-    def from_dto(cls, dto: Any) -> "ClassCandidateValue":
+    def from_dto(cls, dto: Any) -> ClassCandidateValue:
         return cls(class_name=str(dto.class_name).strip(), description=str(dto.description).strip())
 
 
@@ -128,7 +127,7 @@ class RequiredFieldItemValue:
             raise ValueError("required item evidence_type is required")
 
     @classmethod
-    def from_dto(cls, dto: Any) -> "RequiredFieldItemValue":
+    def from_dto(cls, dto: Any) -> RequiredFieldItemValue:
         region_id = getattr(dto, "region_id", None)
         return cls(
             item_name=str(dto.item_name).strip(),

@@ -1,61 +1,74 @@
-import asyncio
+import copy
 import csv
 import io
 import json
-import threading
 from collections import Counter
 from datetime import datetime
 from typing import Any
 
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
+from app.application.dispatch import JobDispatch
+from app.application.table_exports import PageSource, TableExportCollector, effective_tables, job_definition, table_node_summary
+from app.application.table_extraction import run_table_extraction_job_async
 from app.audit import log_audit_event
 from app.concurrency import gather_workflow_limited, run_workflow_blocking
-from app.database import SessionLocal
+from app.core.clock import utcnow
+from app.core.db import SessionLocal
 from app.document_modules import (
     classification_result_to_dict,
     required_field_result_to_dict,
-    run_classification_job,
     run_classification_job_async,
-    run_required_field_check_job,
     run_required_field_check_job_async,
 )
-from app.extraction import result_to_dict, run_extraction_job, run_extraction_job_async
+from app.domain.status import (
+    WORKFLOW_ITEM_TERMINAL_STATUSES,
+    WORKFLOW_RUN_QUEUE_ADVANCE_STATUSES,
+    ModuleJobStatus,
+    RequiredOverallStatus,
+    WorkflowRunItemStatus,
+    WorkflowRunStatus,
+)
+from app.domain.table_spec import load_definition as _load_table_definition
+from app.domain.table_spec import select_tables as _select_tables
+from app.domain.workflow_run import WorkflowRunItemLifecycle, WorkflowRunLifecycle
+from app.extraction import result_to_dict, run_extraction_job_async
+from app.infra.persistence.json_types import dumps_json_text
 from app.models import (
     ClassificationJob,
     Document,
     DocumentClassifier,
-    ExportPreset,
     ExtractionJob,
     RequiredFieldCheckJob,
     RequiredFieldChecklist,
+    RotationJob,
     Schema,
+    TableExtractionJob,
+    TableExtractionResult,
+    TableTemplate,
     WorkflowDefinition,
     WorkflowRun,
     WorkflowRunItem,
 )
+from app.rotation import create_rotation_job, rotation_job_pages, run_rotation_job_async
 from app.vlm import vlm_runtime_counters
-from app.workflow_graph import (
-    WorkflowGraph,
-    branch_candidate_key as _branch_candidate_key,
-    branch_edge_key as _branch_edge_key,
-    build_workflow_graph as _build_graph,
-    node_config_value as _node_config_value,
-    node_kind as _node_kind,
-    node_label as _node_label,
-    reachable_node_ids as _reachable_node_ids,
-    select_branch_edge as _select_branch_edge,
-    single_next_node_id as _single_next_node_id,
-    single_node_id as _single_node_id,
-    validate_workflow_branch_shape as _validate_branch_shape,
-    validate_workflow_graph_shape as _validate_graph_shape,
-    workflow_summary as _workflow_summary,
-)
-
-
-WORKFLOW_TERMINAL_STATUSES = {"completed", "needs_review", "failed", "canceled"}
-WORKFLOW_QUEUE_ADVANCE_STATUSES = {"completed", "completed_with_errors", "needs_review"}
+from app.workflow_graph import WorkflowGraph
+from app.workflow_graph import applied_rotation_corrections as _applied_rotation_corrections
+from app.workflow_graph import branch_candidate_key as _branch_candidate_key
+from app.workflow_graph import branch_edge_key as _branch_edge_key
+from app.workflow_graph import build_workflow_graph as _build_graph
+from app.workflow_graph import node_config_list as _node_config_list
+from app.workflow_graph import node_config_value as _node_config_value
+from app.workflow_graph import node_kind as _node_kind
+from app.workflow_graph import node_label as _node_label
+from app.workflow_graph import reachable_node_ids as _reachable_node_ids
+from app.workflow_graph import select_branch_edge as _select_branch_edge
+from app.workflow_graph import single_next_node_id as _single_next_node_id
+from app.workflow_graph import single_node_id as _single_node_id
+from app.workflow_graph import validate_workflow_branch_shape as _validate_branch_shape
+from app.workflow_graph import validate_workflow_graph_shape as _validate_graph_shape
+from app.workflow_graph import workflow_summary as _workflow_summary
 
 
 class WorkflowPaused(RuntimeError):
@@ -76,7 +89,7 @@ def workflow_definition_to_read(workflow: WorkflowDefinition, db: Session) -> di
     definition = _workflow_definition_json(workflow)
     warnings: list[str] = []
     try:
-        warnings = validate_workflow_definition(definition, db, workspace_id=workflow.workspace_id).warnings
+        warnings = validate_workflow_definition(definition, db).warnings
     except WorkflowDefinitionError:
         warnings = []
     return {
@@ -96,11 +109,10 @@ def _workflow_run_name(run: WorkflowRun) -> str | None:
 
 
 def _workflow_definition_for_run(run: WorkflowRun, workflow: WorkflowDefinition | None) -> dict[str, Any]:
-    if run.workflow_definition_json:
-        try:
-            return json.loads(run.workflow_definition_json)
-        except json.JSONDecodeError as exc:
-            raise ValueError("Workflow run definition snapshot is invalid") from exc
+    if run.workflow_definition_json is not None:
+        if not isinstance(run.workflow_definition_json, dict):
+            raise ValueError("Workflow run definition snapshot is invalid")
+        return run.workflow_definition_json
     if not workflow or workflow.archived:
         raise ValueError("Workflow definition not found")
     return _workflow_definition_json(workflow)
@@ -116,10 +128,7 @@ def workflow_runs_to_read(
         return [workflow_run_to_read(run, include_items=include_items, db=db) for run in runs]
 
     status_counts_by_run = _workflow_run_status_counts_for_runs([run.id for run in runs], db)
-    return [
-        _workflow_run_to_read_with_status_counts(run, status_counts_by_run.get(run.id, {}), include_items=False)
-        for run in runs
-    ]
+    return [_workflow_run_to_read_with_status_counts(run, status_counts_by_run.get(run.id, {}), include_items=False) for run in runs]
 
 
 def workflow_run_to_read(
@@ -161,8 +170,8 @@ def _workflow_run_to_read_with_status_counts(
         "status": counters["status"],
         "total_count": run.total_count,
         "completed_count": counters["completed_count"],
-        "failed_count": status_counts.get("failed", 0),
-        "needs_review_count": status_counts.get("needs_review", 0),
+        "failed_count": status_counts.get(WorkflowRunItemStatus.FAILED, 0),
+        "needs_review_count": status_counts.get(WorkflowRunItemStatus.NEEDS_REVIEW, 0),
         "uploaded_count": counters["uploaded_count"],
         "preprocessing_count": counters["preprocessing_count"],
         "ready_count": counters["ready_count"],
@@ -189,6 +198,7 @@ def workflow_run_item_to_read(item: WorkflowRunItem) -> dict[str, Any]:
         "id": item.id,
         "run_id": item.run_id,
         "document_id": item.document_id,
+        "page_number": item.page_number,
         "filename": item.filename,
         "upload_index": item.upload_index,
         "status": item.status,
@@ -201,12 +211,12 @@ def workflow_run_item_to_read(item: WorkflowRunItem) -> dict[str, Any]:
     }
 
 
-def validate_workflow_definition(definition: dict[str, Any], db: Session, *, workspace_id: str | None = None) -> WorkflowGraph:
+def validate_workflow_definition(definition: dict[str, Any], db: Session) -> WorkflowGraph:
     graph = _build_graph(definition)
     errors = _validate_graph_shape(graph)
-    errors.extend(_validate_config_references(graph, db, workspace_id=workspace_id))
+    errors.extend(_validate_config_references(graph, db))
     errors.extend(_validate_branch_shape(graph))
-    warnings = _workflow_warnings(graph, db, workspace_id=workspace_id)
+    warnings = _workflow_warnings(graph, db)
     if errors:
         raise WorkflowDefinitionError(errors)
     return WorkflowGraph(
@@ -217,10 +227,6 @@ def validate_workflow_definition(definition: dict[str, Any], db: Session, *, wor
         incoming=graph.incoming,
         warnings=warnings,
     )
-
-
-def run_workflow_run(run_id: str, execution_generation: int | None = None) -> None:
-    asyncio.run(run_workflow_run_async(run_id, execution_generation))
 
 
 async def run_workflow_run_async(run_id: str, execution_generation: int | None = None) -> None:
@@ -252,28 +258,27 @@ def _prepare_workflow_run_execution(
     try:
         run = db.get(WorkflowRun, run_id)
         if not run:
-            return
-        if run.status == "waiting":
-            return
+            return None
+        if run.status == WorkflowRunStatus.WAITING:
+            return None
         generation = run.execution_generation if execution_generation is None else execution_generation
         if run.execution_generation != generation:
-            return
+            return None
         workflow = db.get(WorkflowDefinition, run.workflow_id)
         try:
-            graph = validate_workflow_definition(_workflow_definition_for_run(run, workflow), db, workspace_id=run.workspace_id)
+            graph = validate_workflow_definition(_workflow_definition_for_run(run, workflow), db)
         except WorkflowDefinitionError as exc:
             _fail_run(db, run, "; ".join(exc.errors))
-            return
+            return None
         except ValueError as exc:
             _fail_run(db, run, str(exc))
-            return
-        run.status = "running"
-        run.started_at = run.started_at or datetime.utcnow()
+            return None
+        WorkflowRunLifecycle(run).mark_executing(utcnow())
         db.commit()
         item_ids = [
             item.id
             for item in sorted(run.items, key=_workflow_item_sort_key)
-            if item.status == "queued" and item.execution_generation == generation
+            if item.status == WorkflowRunItemStatus.QUEUED and item.execution_generation == generation
         ]
         return graph, item_ids, generation
     finally:
@@ -281,9 +286,21 @@ def _prepare_workflow_run_execution(
 
 
 def workflow_run_export_payload(run: WorkflowRun) -> dict[str, Any]:
+    return workflow_run_export_bundle(run)[0]
+
+
+def workflow_run_export_bundle(run: WorkflowRun) -> tuple[dict[str, Any], TableExportCollector]:
+    """The export payload plus the rows of the run's table nodes (empty collector without table nodes).
+
+    Workflows with table nodes get ``table_<key>_rows`` / ``table_<key>_status`` columns on the
+    item rows and a top-level ``tables`` list (one group per template + table key) in JSON; the
+    XLSX export adds one sheet per group. Workflows without table nodes are unchanged.
+    """
     items = sorted(run.items, key=_workflow_item_sort_key)
-    rows = [_workflow_export_row(item) for item in items]
-    return {
+    include_rotation = _workflow_run_has_rotation_node(run, items)
+    rows = [_workflow_export_row(item, include_rotation=include_rotation) for item in items]
+    collector = _workflow_table_collector(run, items)
+    payload: dict[str, Any] = {
         "workflow_run_id": run.id,
         "workflow_id": run.workflow_id,
         "workflow_name": _workflow_run_name(run),
@@ -292,6 +309,48 @@ def workflow_run_export_payload(run: WorkflowRun) -> dict[str, Any]:
         "total_count": run.total_count,
         "rows": rows,
     }
+    if collector:
+        payload["tables"] = collector.json_groups()
+    return payload, collector
+
+
+def _workflow_table_collector(run: WorkflowRun, items: list[WorkflowRunItem]) -> TableExportCollector:
+    """Collect the (corrected, when reviewed) table rows of every table node, grouped per template + table key."""
+    collector = TableExportCollector(group_by_template=True)
+    db = object_session(run)
+    if db is None:
+        return collector
+    template_names: dict[str, str] = {}
+    for item in items:
+        node_results = _json_or_empty(item.result_json).get("node_results")
+        if not isinstance(node_results, dict):
+            continue
+        for node_result in node_results.values():
+            if not isinstance(node_result, dict) or node_result.get("kind") != "table" or not node_result.get("job_id"):
+                continue
+            job = db.get(TableExtractionJob, node_result["job_id"])
+            if not job:
+                continue
+            template_id = job.template_id
+            if template_id not in template_names:
+                template = db.get(TableTemplate, template_id)
+                template_names[template_id] = template.name if template else template_id
+            definition = job_definition(job)
+            if definition is not None:
+                try:
+                    tables = _select_tables(definition, job.table_keys)
+                except ValueError:
+                    tables = definition.tables
+                collector.declare(definition.model_copy(update={"tables": tables}), template_id=template_id, template_name=template_names[template_id])
+            source = PageSource(item.filename, item.page_number, item.document_id, job.id, item.id)
+            if job.result is None:
+                if job.status == ModuleJobStatus.FAILED:
+                    collector.add_failure(source, "job_failed", job.error_message or "Table extraction failed")
+                continue
+            collector.add_tables(
+                source, effective_tables(job.result), definition, template_id=template_id, template_name=template_names[template_id]
+            )
+    return collector
 
 
 def workflow_run_export_csv(run: WorkflowRun) -> str:
@@ -305,67 +364,6 @@ def workflow_run_export_csv(run: WorkflowRun) -> str:
     return output.getvalue()
 
 
-def _run_workflow_item(item_id: str, graph: WorkflowGraph, execution_generation: int) -> None:
-    db = SessionLocal()
-    try:
-        item = db.get(WorkflowRunItem, item_id)
-        if not item:
-            return
-        run = db.get(WorkflowRun, item.run_id)
-        if run and run.status == "paused":
-            return
-        if not run or run.execution_generation != execution_generation or item.execution_generation != execution_generation:
-            return
-        if item.status != "queued":
-            return
-        inference_started_at = datetime.utcnow()
-        item.status = "running"
-        item.error_message = None
-        item.result_json = _json_dumps(
-            {
-                "document_id": item.document_id,
-                "filename": item.filename,
-                "node_results": {},
-                "branch_path": None,
-                "path_node_ids": [],
-                "completed_node_ids": [],
-                "current_node_id": None,
-                "current_node_kind": None,
-                "current_node_label": None,
-            },
-        )
-        db.commit()
-
-        result = _execute_graph_for_item(db, item, graph)
-        db.refresh(item)
-        run = db.get(WorkflowRun, item.run_id)
-        if not run or run.execution_generation != execution_generation or item.execution_generation != execution_generation:
-            db.rollback()
-            return
-        item.status = result["status"]
-        item.error_message = result.get("error_message")
-        item.inference_duration_ms = _elapsed_ms(inference_started_at)
-        item.result_json = _json_dumps(result)
-        item.completed_at = datetime.utcnow()
-        log_audit_event(
-            db,
-            entity_type="workflow_run_item",
-            entity_id=item.id,
-            action=item.status,
-            message=f"Workflow item finished with status {item.status}",
-            metadata={"document_id": item.document_id, "workflow_run_id": item.run_id},
-        )
-        db.commit()
-    except WorkflowPaused:
-        db.rollback()
-    except Exception as exc:
-        db.rollback()
-        duration = _elapsed_ms(inference_started_at) if "inference_started_at" in locals() else None
-        _mark_workflow_item_failed(item_id, str(exc), db=db, inference_duration_ms=duration, execution_generation=execution_generation)
-    finally:
-        db.close()
-
-
 async def _run_workflow_item_async(item_id: str, graph: WorkflowGraph, execution_generation: int) -> None:
     inference_started_at: datetime | None = None
     try:
@@ -373,7 +371,9 @@ async def _run_workflow_item_async(item_id: str, graph: WorkflowGraph, execution
         if not started:
             return
         inference_started_at = started["inference_started_at"]
-        result = await _execute_graph_for_item_async(item_id, started["document_id"], started["filename"], graph, execution_generation)
+        result = await _execute_graph_for_item_async(
+            item_id, started["document_id"], started["filename"], graph, execution_generation, started["page_number"]
+        )
         await run_workflow_blocking(_finish_workflow_item, item_id, execution_generation, inference_started_at, result)
     except (WorkflowPaused, WorkflowStopped):
         return
@@ -395,18 +395,18 @@ def _begin_workflow_item(item_id: str, execution_generation: int) -> dict[str, A
         if not item:
             return None
         run = db.get(WorkflowRun, item.run_id)
-        if run and run.status == "paused":
+        if run and run.status == WorkflowRunStatus.PAUSED:
             return None
         if not run or run.execution_generation != execution_generation or item.execution_generation != execution_generation:
             return None
-        if item.status != "queued":
+        if item.status != WorkflowRunItemStatus.QUEUED:
             return None
-        inference_started_at = datetime.utcnow()
-        item.status = "running"
-        item.error_message = None
-        item.result_json = _json_dumps(
+        inference_started_at = utcnow()
+        WorkflowRunItemLifecycle(item).mark_running()
+        item.result_json = _json_document(
             {
                 "document_id": item.document_id,
+                "page_number": item.page_number,
                 "filename": item.filename,
                 "node_results": {},
                 "branch_path": None,
@@ -420,6 +420,7 @@ def _begin_workflow_item(item_id: str, execution_generation: int) -> dict[str, A
         db.commit()
         return {
             "document_id": item.document_id,
+            "page_number": item.page_number,
             "filename": item.filename,
             "inference_started_at": inference_started_at,
         }
@@ -442,15 +443,14 @@ def _finish_workflow_item(
         if not run or run.execution_generation != execution_generation or item.execution_generation != execution_generation:
             db.rollback()
             return
-        if run.status == "paused" or item.status == "paused":
+        if run.status == WorkflowRunStatus.PAUSED or item.status == WorkflowRunItemStatus.PAUSED:
             raise WorkflowPaused()
-        if run.status == "canceled" or item.status == "canceled":
+        if run.status == WorkflowRunStatus.CANCELED or item.status == WorkflowRunItemStatus.CANCELED:
             raise WorkflowStopped()
-        item.status = result["status"]
-        item.error_message = result.get("error_message")
-        item.inference_duration_ms = _elapsed_ms(inference_started_at)
-        item.result_json = _json_dumps(result)
-        item.completed_at = datetime.utcnow()
+        inference_duration_ms = _elapsed_ms(inference_started_at)
+        WorkflowRunItemLifecycle(item).finish(result["status"], error_message=result.get("error_message"), now=utcnow())
+        item.inference_duration_ms = inference_duration_ms
+        item.result_json = _json_document(result)
         log_audit_event(
             db,
             entity_type="workflow_run_item",
@@ -517,11 +517,10 @@ def _ensure_workflow_item_active(
         run = db.get(WorkflowRun, item.run_id)
         if not run or run.execution_generation != execution_generation or item.execution_generation != execution_generation:
             raise WorkflowStopped()
-        if run.status == "canceled" or item.status == "canceled":
+        if run.status == WorkflowRunStatus.CANCELED or item.status == WorkflowRunItemStatus.CANCELED:
             raise WorkflowStopped()
-        if run.status == "paused" or item.status == "paused":
-            item.status = "paused"
-            item.error_message = "Paused by user"
+        if run.status == WorkflowRunStatus.PAUSED or item.status == WorkflowRunItemStatus.PAUSED:
+            WorkflowRunItemLifecycle(item).pause()
             _save_workflow_item_progress(
                 db,
                 item,
@@ -556,14 +555,13 @@ def _mark_workflow_item_failed(
             if not run or run.execution_generation != execution_generation or failed.execution_generation != execution_generation:
                 return
         existing = _json_or_empty(failed.result_json)
-        failed.status = "failed"
-        failed.error_message = message
+        WorkflowRunItemLifecycle(failed).fail(message, utcnow())
         if inference_duration_ms is not None:
             failed.inference_duration_ms = inference_duration_ms
-        failed.completed_at = datetime.utcnow()
-        failed.result_json = _json_dumps(
+        failed.result_json = _json_document(
             {
                 "document_id": failed.document_id,
+                "page_number": failed.page_number,
                 "filename": failed.filename,
                 "node_results": existing.get("node_results", {}),
                 "branch_path": existing.get("branch_path"),
@@ -590,7 +588,7 @@ def _mark_workflow_item_failed(
 
 
 def _elapsed_ms(started_at: datetime, ended_at: datetime | None = None) -> int:
-    ended = ended_at or datetime.utcnow()
+    ended = ended_at or utcnow()
     return max(0, int((ended - started_at).total_seconds() * 1000))
 
 
@@ -613,9 +611,10 @@ def _save_workflow_item_progress(
     current_node_kind: str | None = None,
     current_node_label: str | None = None,
 ) -> None:
-    item.result_json = _json_dumps(
+    item.result_json = _json_document(
         {
             "document_id": item.document_id,
+            "page_number": item.page_number,
             "filename": item.filename,
             "status": item.status,
             "error_message": item.error_message,
@@ -632,188 +631,22 @@ def _save_workflow_item_progress(
     db.commit()
 
 
-def _execute_graph_for_item(db: Session, item: WorkflowRunItem, graph: WorkflowGraph) -> dict[str, Any]:
-    input_node_id = _single_node_id(graph, "input")
-    current_id = _single_next_node_id(graph, input_node_id)
-    node_results: dict[str, Any] = {}
-    visited: list[str] = []
-    completed_node_ids: list[str] = []
-    branch_path: str | None = None
-    status = "completed"
-    error_message: str | None = None
-
-    while current_id:
-        _raise_if_workflow_paused(db, item, node_results, branch_path, visited, completed_node_ids, current_id)
-        if current_id in visited:
-            raise RuntimeError("Workflow cycle detected during execution")
-        visited.append(current_id)
-        node = graph.nodes[current_id]
-        kind = _node_kind(node)
-        _save_workflow_item_progress(
-            db,
-            item,
-            node_results=node_results,
-            branch_path=branch_path,
-            visited=visited,
-            completed_node_ids=completed_node_ids,
-            current_node_id=current_id,
-            current_node_kind=kind,
-            current_node_label=_node_label(node),
-        )
-        if kind == "classifier":
-            node_result = _execute_classifier_node(db, item.document_id, node)
-            node_results[current_id] = node_result
-            _raise_if_workflow_paused(db, item, node_results, branch_path, visited, completed_node_ids, current_id)
-            if node_result["status"] == "failed":
-                status = "failed"
-                error_message = node_result.get("error_message")
-                break
-            completed_node_ids.append(current_id)
-            _save_workflow_item_progress(
-                db,
-                item,
-                node_results=node_results,
-                branch_path=branch_path,
-                visited=visited,
-                completed_node_ids=completed_node_ids,
-            )
-            current_id = _single_next_node_id(graph, current_id)
-            continue
-        if kind == "branch":
-            branch_edge = _select_branch_edge(graph, current_id, node_results)
-            if not branch_edge:
-                branch_path = _branch_candidate_key(node_results)
-                node_results[current_id] = {
-                    "kind": kind,
-                    "status": "completed",
-                    "branch_key": branch_path,
-                    "downstream_skipped": True,
-                }
-                completed_node_ids.append(current_id)
-                break
-            branch_path = _branch_edge_key(branch_edge)
-            node_results[current_id] = {"kind": kind, "status": "completed", "branch_key": branch_path}
-            completed_node_ids.append(current_id)
-            _save_workflow_item_progress(
-                db,
-                item,
-                node_results=node_results,
-                branch_path=branch_path,
-                visited=visited,
-                completed_node_ids=completed_node_ids,
-            )
-            current_id = branch_edge["target"]
-            continue
-        if kind == "kie":
-            node_result = _execute_kie_node(db, item.document_id, node)
-            node_results[current_id] = node_result
-            _raise_if_workflow_paused(db, item, node_results, branch_path, visited, completed_node_ids, current_id)
-            if node_result["status"] == "failed":
-                status = "failed"
-                error_message = node_result.get("error_message")
-                break
-            if node_result["status"] == "needs_review":
-                status = "needs_review"
-            completed_node_ids.append(current_id)
-            _save_workflow_item_progress(
-                db,
-                item,
-                node_results=node_results,
-                branch_path=branch_path,
-                visited=visited,
-                completed_node_ids=completed_node_ids,
-            )
-            current_id = _single_next_node_id(graph, current_id)
-            continue
-        if kind == "required-checker":
-            node_result = _execute_required_node(db, item.document_id, node)
-            node_results[current_id] = node_result
-            _raise_if_workflow_paused(db, item, node_results, branch_path, visited, completed_node_ids, current_id)
-            if node_result["status"] == "failed":
-                status = "failed"
-                error_message = node_result.get("error_message")
-                break
-            overall = node_result.get("required_check", {}).get("overall_status")
-            if node_result["status"] == "needs_review" or overall in {"incomplete", "needs_review"}:
-                status = "needs_review"
-            completed_node_ids.append(current_id)
-            _save_workflow_item_progress(
-                db,
-                item,
-                node_results=node_results,
-                branch_path=branch_path,
-                visited=visited,
-                completed_node_ids=completed_node_ids,
-            )
-            current_id = _single_next_node_id(graph, current_id)
-            continue
-        if kind == "merge":
-            node_results[current_id] = {"kind": kind, "status": "completed"}
-            completed_node_ids.append(current_id)
-            _save_workflow_item_progress(
-                db,
-                item,
-                node_results=node_results,
-                branch_path=branch_path,
-                visited=visited,
-                completed_node_ids=completed_node_ids,
-            )
-            current_id = _single_next_node_id(graph, current_id)
-            continue
-        if kind == "export":
-            node_results[current_id] = {"kind": kind, "status": "completed"}
-            completed_node_ids.append(current_id)
-            break
-        current_id = _single_next_node_id(graph, current_id)
-
-    summary = _workflow_summary(node_results, branch_path)
-    return {
-        "document_id": item.document_id,
-        "filename": item.filename,
-        "status": status,
-        "error_message": error_message,
-        "branch_path": branch_path,
-        "path_node_ids": visited,
-        "completed_node_ids": completed_node_ids,
-        "current_node_id": None,
-        "current_node_kind": None,
-        "current_node_label": None,
-        "node_results": node_results,
-        **summary,
-    }
-
-
-_ORIGINAL_EXECUTE_GRAPH_FOR_ITEM = _execute_graph_for_item
-
-
-def _execute_graph_for_item_compat(item_id: str, graph: WorkflowGraph) -> dict[str, Any]:
-    db = SessionLocal()
-    try:
-        item = db.get(WorkflowRunItem, item_id)
-        if not item:
-            raise WorkflowStopped()
-        return _execute_graph_for_item(db, item, graph)
-    finally:
-        db.close()
-
-
 async def _execute_graph_for_item_async(
     item_id: str,
     document_id: str,
     filename: str,
     graph: WorkflowGraph,
     execution_generation: int,
+    page_number: int | None = None,
 ) -> dict[str, Any]:
-    if _execute_graph_for_item is not _ORIGINAL_EXECUTE_GRAPH_FOR_ITEM:
-        return await run_workflow_blocking(_execute_graph_for_item_compat, item_id, graph)
-
+    """Run one workflow item — one page of a document (``page_number``; ``None`` = whole document) — through the graph."""
     input_node_id = _single_node_id(graph, "input")
     current_id = _single_next_node_id(graph, input_node_id)
     node_results: dict[str, Any] = {}
     visited: list[str] = []
     completed_node_ids: list[str] = []
     branch_path: str | None = None
-    status = "completed"
+    status = WorkflowRunItemStatus.COMPLETED
     error_message: str | None = None
 
     async def ensure_active(node_id: str | None) -> None:
@@ -850,30 +683,38 @@ async def _execute_graph_for_item_async(
         node = graph.nodes[current_id]
         kind = _node_kind(node)
         await save_progress(current_id, kind, _node_label(node))
+        if kind == "rotation":
+            # Rotation rewrites the item's library page image in place, so later nodes need no hand-off.
+            job_id = await run_workflow_blocking(_create_rotation_job, document_id, page_number)
+            node_results[current_id] = {"kind": "rotation", "label": _node_label(node), "status": WorkflowRunItemStatus.RUNNING, "job_id": job_id}
+            await save_progress(current_id, kind, _node_label(node))
+            await ensure_active(current_id)
+            await run_rotation_job_async(job_id)
+            await ensure_active(current_id)
+            node_result = await run_workflow_blocking(_rotation_node_result, job_id, _node_label(node))
+            node_results[current_id] = node_result
+            if node_result["status"] == WorkflowRunItemStatus.FAILED:
+                status = WorkflowRunItemStatus.FAILED
+                error_message = node_result.get("error_message")
+                break
+            if node_result["status"] == WorkflowRunItemStatus.NEEDS_REVIEW:
+                status = WorkflowRunItemStatus.NEEDS_REVIEW
+            completed_node_ids.append(current_id)
+            await save_progress()
+            current_id = _single_next_node_id(graph, current_id)
+            continue
         if kind == "classifier":
-            if _execute_classifier_node is not _ORIGINAL_EXECUTE_CLASSIFIER_NODE:
-                node_result = await run_workflow_blocking(_execute_node_compat, item_id, document_id, node, _execute_classifier_node)
-                node_results[current_id] = node_result
-                await ensure_active(current_id)
-                if node_result["status"] == "failed":
-                    status = "failed"
-                    error_message = node_result.get("error_message")
-                    break
-                completed_node_ids.append(current_id)
-                await save_progress()
-                current_id = _single_next_node_id(graph, current_id)
-                continue
             classifier_id = _node_config_value(node, "classifier_id")
-            job_id = await run_workflow_blocking(_create_classification_job, document_id, classifier_id)
-            node_results[current_id] = {"kind": "classifier", "status": "running", "job_id": job_id, "classifier_id": classifier_id}
+            job_id = await run_workflow_blocking(_create_classification_job, document_id, classifier_id, page_number)
+            node_results[current_id] = {"kind": "classifier", "status": WorkflowRunItemStatus.RUNNING, "job_id": job_id, "classifier_id": classifier_id}
             await save_progress(current_id, kind, _node_label(node))
             await ensure_active(current_id)
             await run_classification_job_async(job_id)
             await ensure_active(current_id)
             node_result = await run_workflow_blocking(_classification_node_result, job_id, classifier_id)
             node_results[current_id] = node_result
-            if node_result["status"] == "failed":
-                status = "failed"
+            if node_result["status"] == WorkflowRunItemStatus.FAILED:
+                status = WorkflowRunItemStatus.FAILED
                 error_message = node_result.get("error_message")
                 break
             completed_node_ids.append(current_id)
@@ -886,44 +727,65 @@ async def _execute_graph_for_item_async(
                 branch_path = _branch_candidate_key(node_results)
                 node_results[current_id] = {
                     "kind": kind,
-                    "status": "completed",
+                    "status": WorkflowRunItemStatus.COMPLETED,
                     "branch_key": branch_path,
                     "downstream_skipped": True,
                 }
                 completed_node_ids.append(current_id)
                 break
             branch_path = _branch_edge_key(branch_edge)
-            node_results[current_id] = {"kind": kind, "status": "completed", "branch_key": branch_path}
+            node_results[current_id] = {"kind": kind, "status": WorkflowRunItemStatus.COMPLETED, "branch_key": branch_path}
             completed_node_ids.append(current_id)
             await save_progress()
             current_id = branch_edge["target"]
             continue
         if kind == "kie":
             schema_id = _node_config_value(node, "schema_id")
-            job_id = await run_workflow_blocking(_create_extraction_job, document_id, schema_id)
-            node_results[current_id] = {"kind": "kie", "status": "running", "job_id": job_id, "schema_id": schema_id}
+            job_id = await run_workflow_blocking(_create_extraction_job, document_id, schema_id, page_number)
+            node_results[current_id] = {"kind": "kie", "status": WorkflowRunItemStatus.RUNNING, "job_id": job_id, "schema_id": schema_id}
             await save_progress(current_id, kind, _node_label(node))
             await ensure_active(current_id)
             await run_extraction_job_async(job_id)
             await ensure_active(current_id)
             node_result = await run_workflow_blocking(_kie_node_result, job_id, schema_id)
             node_results[current_id] = node_result
-            if node_result["status"] == "failed":
-                status = "failed"
+            if node_result["status"] == WorkflowRunItemStatus.FAILED:
+                status = WorkflowRunItemStatus.FAILED
                 error_message = node_result.get("error_message")
                 break
-            if node_result["status"] == "needs_review":
-                status = "needs_review"
+            if node_result["status"] == WorkflowRunItemStatus.NEEDS_REVIEW:
+                status = WorkflowRunItemStatus.NEEDS_REVIEW
+            completed_node_ids.append(current_id)
+            await save_progress()
+            current_id = _single_next_node_id(graph, current_id)
+            continue
+        if kind == "table":
+            template_id = _node_config_value(node, "template_id")
+            table_keys = _node_config_list(node, "table_keys")
+            job_id = await run_workflow_blocking(_create_table_job, document_id, template_id, table_keys, page_number)
+            node_results[current_id] = {"kind": "table", "status": WorkflowRunItemStatus.RUNNING, "job_id": job_id, "template_id": template_id}
+            await save_progress(current_id, kind, _node_label(node))
+            await ensure_active(current_id)
+            await run_table_extraction_job_async(job_id)
+            await ensure_active(current_id)
+            node_result = await run_workflow_blocking(_table_node_result, job_id, template_id)
+            node_results[current_id] = node_result
+            if node_result["status"] == WorkflowRunItemStatus.FAILED:
+                status = WorkflowRunItemStatus.FAILED
+                error_message = node_result.get("error_message")
+                break
+            if node_result["status"] == WorkflowRunItemStatus.NEEDS_REVIEW:
+                status = WorkflowRunItemStatus.NEEDS_REVIEW
             completed_node_ids.append(current_id)
             await save_progress()
             current_id = _single_next_node_id(graph, current_id)
             continue
         if kind == "required-checker":
             checklist_id = _node_config_value(node, "checklist_id")
-            job_id = await run_workflow_blocking(_create_required_job, document_id, checklist_id)
+            job_id = await run_workflow_blocking(_create_required_job, document_id, checklist_id, page_number)
             node_results[current_id] = {
                 "kind": "required-checker",
-                "status": "running",
+                "status": WorkflowRunItemStatus.RUNNING,
                 "job_id": job_id,
                 "checklist_id": checklist_id,
             }
@@ -933,25 +795,25 @@ async def _execute_graph_for_item_async(
             await ensure_active(current_id)
             node_result = await run_workflow_blocking(_required_node_result, job_id, checklist_id)
             node_results[current_id] = node_result
-            if node_result["status"] == "failed":
-                status = "failed"
+            if node_result["status"] == WorkflowRunItemStatus.FAILED:
+                status = WorkflowRunItemStatus.FAILED
                 error_message = node_result.get("error_message")
                 break
             overall = node_result.get("required_check", {}).get("overall_status")
-            if node_result["status"] == "needs_review" or overall in {"incomplete", "needs_review"}:
-                status = "needs_review"
+            if node_result["status"] == WorkflowRunItemStatus.NEEDS_REVIEW or overall in {RequiredOverallStatus.INCOMPLETE, RequiredOverallStatus.NEEDS_REVIEW}:
+                status = WorkflowRunItemStatus.NEEDS_REVIEW
             completed_node_ids.append(current_id)
             await save_progress()
             current_id = _single_next_node_id(graph, current_id)
             continue
         if kind == "merge":
-            node_results[current_id] = {"kind": kind, "status": "completed"}
+            node_results[current_id] = {"kind": kind, "status": WorkflowRunItemStatus.COMPLETED}
             completed_node_ids.append(current_id)
             await save_progress()
             current_id = _single_next_node_id(graph, current_id)
             continue
         if kind == "export":
-            node_results[current_id] = {"kind": kind, "status": "completed"}
+            node_results[current_id] = {"kind": kind, "status": WorkflowRunItemStatus.COMPLETED}
             completed_node_ids.append(current_id)
             break
         current_id = _single_next_node_id(graph, current_id)
@@ -959,6 +821,7 @@ async def _execute_graph_for_item_async(
     summary = _workflow_summary(node_results, branch_path)
     return {
         "document_id": document_id,
+        "page_number": page_number,
         "filename": filename,
         "status": status,
         "error_message": error_message,
@@ -973,42 +836,57 @@ async def _execute_graph_for_item_async(
     }
 
 
-def _raise_if_workflow_paused(
-    db: Session,
-    item: WorkflowRunItem,
-    node_results: dict[str, Any],
-    branch_path: str | None,
-    visited: list[str],
-    completed_node_ids: list[str],
-    current_node_id: str | None,
-) -> None:
-    run = db.get(WorkflowRun, item.run_id)
-    if run and run.status == "paused":
-        item.status = "paused"
-        item.error_message = "Paused by user"
-        _save_workflow_item_progress(
-            db,
-            item,
-            node_results=node_results,
-            branch_path=branch_path,
-            visited=visited,
-            completed_node_ids=completed_node_ids,
-            current_node_id=current_node_id,
-            current_node_kind=None,
-            current_node_label=None,
-        )
-        raise WorkflowPaused()
-
-
-def _create_classification_job(document_id: str, classifier_id: str) -> str:
+def _create_rotation_job(document_id: str, page_number: int | None = None) -> str:
     db = SessionLocal()
     try:
         document = db.get(Document, document_id)
+        if not document:
+            raise RuntimeError("Document not found")
+        job = create_rotation_job(document, db, page_number=page_number)
+        log_audit_event(
+            db,
+            entity_type="rotation_job",
+            entity_id=job.id,
+            action="queued",
+            message="Queued workflow rotation job",
+            metadata={"document_id": document_id},
+        )
+        db.commit()
+        return job.id
+    finally:
+        db.close()
+
+
+def _rotation_node_result(job_id: str, label: str) -> dict[str, Any]:
+    db = SessionLocal()
+    try:
+        return _rotation_job_node_result(db.get(RotationJob, job_id), job_id, label)
+    finally:
+        db.close()
+
+
+def _rotation_job_node_result(job: RotationJob | None, job_id: str, label: str) -> dict[str, Any]:
+    if not job:
+        return {"kind": "rotation", "label": label, "status": WorkflowRunItemStatus.FAILED, "job_id": job_id, "error_message": "Rotation job disappeared"}
+    return {
+        "kind": "rotation",
+        "label": label,
+        "status": job.status,
+        "job_id": job.id,
+        "corrected_page_count": job.corrected_page_count,
+        "pages": rotation_job_pages(job),
+        "error_message": job.error_message,
+    }
+
+
+def _create_classification_job(document_id: str, classifier_id: str, page_number: int | None = None) -> str:
+    db = SessionLocal()
+    try:
         job = ClassificationJob(
-            workspace_id=document.workspace_id if document else None,
             document_id=document_id,
+            page_number=page_number,
             classifier_id=classifier_id,
-            status="queued",
+            status=ModuleJobStatus.QUEUED,
         )
         db.add(job)
         db.flush()
@@ -1031,17 +909,19 @@ def _classification_node_result(job_id: str, classifier_id: str) -> dict[str, An
     try:
         loaded = db.get(ClassificationJob, job_id)
         if not loaded:
-            return {"kind": "classifier", "status": "failed", "job_id": job_id, "error_message": "Classification job disappeared"}
-        if loaded.status == "failed":
+            return {"kind": "classifier", "status": WorkflowRunItemStatus.FAILED, "job_id": job_id, "error_message": "Classification job disappeared"}
+        if loaded.status == ModuleJobStatus.FAILED:
             return {
                 "kind": "classifier",
-                "status": "failed",
+                "status": WorkflowRunItemStatus.FAILED,
                 "job_id": loaded.id,
                 "result_id": loaded.result_id,
                 "error_message": loaded.error_message,
             }
         output = classification_result_to_dict(loaded.result) if loaded.result else None
-        classification = output["corrected_output"] if output and output.get("corrected_output") else output.get("validated_output") if output else {}
+        classification = (
+            output["corrected_output"] if output and output.get("corrected_output") else output.get("validated_output") if output else {}
+        )
         return {
             "kind": "classifier",
             "status": loaded.status,
@@ -1055,16 +935,15 @@ def _classification_node_result(job_id: str, classifier_id: str) -> dict[str, An
         db.close()
 
 
-def _create_extraction_job(document_id: str, schema_id: str) -> str:
+def _create_extraction_job(document_id: str, schema_id: str, page_number: int | None = None) -> str:
     db = SessionLocal()
     try:
-        document = db.get(Document, document_id)
         job = ExtractionJob(
-            workspace_id=document.workspace_id if document else None,
             document_id=document_id,
+            page_number=page_number,
             schema_id=schema_id,
             schema_version=1,
-            status="queued",
+            status=ModuleJobStatus.QUEUED,
         )
         db.add(job)
         db.flush()
@@ -1087,17 +966,19 @@ def _kie_node_result(job_id: str, schema_id: str) -> dict[str, Any]:
     try:
         loaded = db.get(ExtractionJob, job_id)
         if not loaded:
-            return {"kind": "kie", "status": "failed", "job_id": job_id, "error_message": "Extraction job disappeared"}
-        if loaded.status == "failed":
+            return {"kind": "kie", "status": WorkflowRunItemStatus.FAILED, "job_id": job_id, "error_message": "Extraction job disappeared"}
+        if loaded.status == ModuleJobStatus.FAILED:
             return {
                 "kind": "kie",
-                "status": "failed",
+                "status": WorkflowRunItemStatus.FAILED,
                 "job_id": loaded.id,
                 "result_id": loaded.result_id,
                 "error_message": loaded.error_message,
             }
         output = result_to_dict(loaded.result) if loaded.result else None
-        payload = output["corrected_output"] if output and output.get("corrected_output") else output.get("validated_output") if output else {}
+        payload = (
+            output["corrected_output"] if output and output.get("corrected_output") else output.get("validated_output") if output else {}
+        )
         return {
             "kind": "kie",
             "status": loaded.status,
@@ -1111,15 +992,85 @@ def _kie_node_result(job_id: str, schema_id: str) -> dict[str, Any]:
         db.close()
 
 
-def _create_required_job(document_id: str, checklist_id: str) -> str:
+def _create_table_job(document_id: str, template_id: str, table_keys: list[str] | None, page_number: int | None = None) -> str:
+    """Queue a table extraction job for the item's page with the template definition as of now (snapshot)."""
     db = SessionLocal()
     try:
-        document = db.get(Document, document_id)
-        job = RequiredFieldCheckJob(
-            workspace_id=document.workspace_id if document else None,
+        template = db.get(TableTemplate, template_id) if template_id else None
+        if not template or template.archived or template.ephemeral:
+            raise RuntimeError("Table template not found")
+        if not db.get(Document, document_id):
+            raise RuntimeError("Document not found")
+        try:
+            tables = _select_tables(_load_table_definition(template.definition_json), table_keys)
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+        if not tables:
+            raise RuntimeError("The table template has no tables to extract")
+        job = TableExtractionJob(
             document_id=document_id,
+            page_number=page_number,
+            template_id=template.id,
+            template_version=template.current_version,
+            definition_snapshot=copy.deepcopy(template.definition_json or {"tables": []}),
+            table_keys=list(table_keys) if table_keys is not None else None,
+            status=ModuleJobStatus.QUEUED,
+        )
+        db.add(job)
+        db.flush()
+        log_audit_event(
+            db,
+            entity_type="table_extraction_job",
+            entity_id=job.id,
+            action="queued",
+            message="Queued workflow table extraction job",
+            metadata={"document_id": document_id, "template_id": template.id, "template_version": template.current_version},
+        )
+        db.commit()
+        return job.id
+    finally:
+        db.close()
+
+
+def _table_node_result(job_id: str, template_id: str) -> dict[str, Any]:
+    db = SessionLocal()
+    try:
+        loaded = db.get(TableExtractionJob, job_id)
+        if not loaded:
+            return {"kind": "table", "status": WorkflowRunItemStatus.FAILED, "job_id": job_id, "error_message": "Table extraction job disappeared"}
+        result = db.get(TableExtractionResult, loaded.result_id) if loaded.result_id else None
+        base = {
+            "kind": "table",
+            "job_id": loaded.id,
+            "result_id": loaded.result_id,
+            "template_id": template_id,
+            "template_version": loaded.template_version,
+        }
+        if loaded.status in {ModuleJobStatus.FAILED, ModuleJobStatus.CANCELED} or result is None:
+            return {
+                **base,
+                "status": WorkflowRunItemStatus.FAILED,
+                "tables": [],
+                "error_message": loaded.error_message or f"Table extraction ended with status {loaded.status}",
+            }
+        return {
+            **base,
+            "status": loaded.status,
+            "tables": [table_node_summary(table) for table in effective_tables(result)],
+            "error_message": loaded.error_message,
+        }
+    finally:
+        db.close()
+
+
+def _create_required_job(document_id: str, checklist_id: str, page_number: int | None = None) -> str:
+    db = SessionLocal()
+    try:
+        job = RequiredFieldCheckJob(
+            document_id=document_id,
+            page_number=page_number,
             checklist_id=checklist_id,
-            status="queued",
+            status=ModuleJobStatus.QUEUED,
         )
         db.add(job)
         db.flush()
@@ -1142,17 +1093,19 @@ def _required_node_result(job_id: str, checklist_id: str) -> dict[str, Any]:
     try:
         loaded = db.get(RequiredFieldCheckJob, job_id)
         if not loaded:
-            return {"kind": "required-checker", "status": "failed", "job_id": job_id, "error_message": "Required check job disappeared"}
-        if loaded.status == "failed":
+            return {"kind": "required-checker", "status": WorkflowRunItemStatus.FAILED, "job_id": job_id, "error_message": "Required check job disappeared"}
+        if loaded.status == ModuleJobStatus.FAILED:
             return {
                 "kind": "required-checker",
-                "status": "failed",
+                "status": WorkflowRunItemStatus.FAILED,
                 "job_id": loaded.id,
                 "result_id": loaded.result_id,
                 "error_message": loaded.error_message,
             }
         output = required_field_result_to_dict(loaded.result) if loaded.result else None
-        payload = output["corrected_output"] if output and output.get("corrected_output") else output.get("validated_output") if output else {}
+        payload = (
+            output["corrected_output"] if output and output.get("corrected_output") else output.get("validated_output") if output else {}
+        )
         return {
             "kind": "required-checker",
             "status": loaded.status,
@@ -1166,161 +1119,6 @@ def _required_node_result(job_id: str, checklist_id: str) -> dict[str, Any]:
         db.close()
 
 
-def _execute_classifier_node(db: Session, document_id: str, node: dict[str, Any]) -> dict[str, Any]:
-    classifier_id = _node_config_value(node, "classifier_id")
-    document = db.get(Document, document_id)
-    job = ClassificationJob(
-        workspace_id=document.workspace_id if document else None,
-        document_id=document_id,
-        classifier_id=classifier_id,
-        status="queued",
-    )
-    db.add(job)
-    db.flush()
-    log_audit_event(
-        db,
-        entity_type="classification_job",
-        entity_id=job.id,
-        action="queued",
-        message="Queued workflow classification job",
-        metadata={"document_id": document_id, "classifier_id": classifier_id},
-    )
-    db.commit()
-    run_classification_job(job.id)
-    db.expire_all()
-    loaded = db.get(ClassificationJob, job.id)
-    if not loaded:
-        return {"kind": "classifier", "status": "failed", "job_id": job.id, "error_message": "Classification job disappeared"}
-    if loaded.status == "failed":
-        return {
-            "kind": "classifier",
-            "status": "failed",
-            "job_id": loaded.id,
-            "result_id": loaded.result_id,
-            "error_message": loaded.error_message,
-        }
-    output = classification_result_to_dict(loaded.result) if loaded.result else None
-    classification = output["corrected_output"] if output and output.get("corrected_output") else output.get("validated_output") if output else {}
-    return {
-        "kind": "classifier",
-        "status": loaded.status,
-        "job_id": loaded.id,
-        "result_id": loaded.result_id,
-        "classifier_id": classifier_id,
-        "classification": classification,
-        "result": output,
-    }
-
-
-def _execute_kie_node(db: Session, document_id: str, node: dict[str, Any]) -> dict[str, Any]:
-    schema_id = _node_config_value(node, "schema_id")
-    document = db.get(Document, document_id)
-    job = ExtractionJob(
-        workspace_id=document.workspace_id if document else None,
-        document_id=document_id,
-        schema_id=schema_id,
-        schema_version=1,
-        status="queued",
-    )
-    db.add(job)
-    db.flush()
-    log_audit_event(
-        db,
-        entity_type="extraction_job",
-        entity_id=job.id,
-        action="queued",
-        message="Queued workflow KIE job",
-        metadata={"document_id": document_id, "schema_id": schema_id},
-    )
-    db.commit()
-    run_extraction_job(job.id)
-    db.expire_all()
-    loaded = db.get(ExtractionJob, job.id)
-    if not loaded:
-        return {"kind": "kie", "status": "failed", "job_id": job.id, "error_message": "Extraction job disappeared"}
-    if loaded.status == "failed":
-        return {
-            "kind": "kie",
-            "status": "failed",
-            "job_id": loaded.id,
-            "result_id": loaded.result_id,
-            "error_message": loaded.error_message,
-        }
-    output = result_to_dict(loaded.result) if loaded.result else None
-    payload = output["corrected_output"] if output and output.get("corrected_output") else output.get("validated_output") if output else {}
-    return {
-        "kind": "kie",
-        "status": loaded.status,
-        "job_id": loaded.id,
-        "result_id": loaded.result_id,
-        "schema_id": schema_id,
-        "values": payload.get("values", {}),
-        "result": output,
-    }
-
-
-def _execute_required_node(db: Session, document_id: str, node: dict[str, Any]) -> dict[str, Any]:
-    checklist_id = _node_config_value(node, "checklist_id")
-    document = db.get(Document, document_id)
-    job = RequiredFieldCheckJob(
-        workspace_id=document.workspace_id if document else None,
-        document_id=document_id,
-        checklist_id=checklist_id,
-        status="queued",
-    )
-    db.add(job)
-    db.flush()
-    log_audit_event(
-        db,
-        entity_type="required_field_check_job",
-        entity_id=job.id,
-        action="queued",
-        message="Queued workflow required field check job",
-        metadata={"document_id": document_id, "checklist_id": checklist_id},
-    )
-    db.commit()
-    run_required_field_check_job(job.id)
-    db.expire_all()
-    loaded = db.get(RequiredFieldCheckJob, job.id)
-    if not loaded:
-        return {"kind": "required-checker", "status": "failed", "job_id": job.id, "error_message": "Required check job disappeared"}
-    if loaded.status == "failed":
-        return {
-            "kind": "required-checker",
-            "status": "failed",
-            "job_id": loaded.id,
-            "result_id": loaded.result_id,
-            "error_message": loaded.error_message,
-        }
-    output = required_field_result_to_dict(loaded.result) if loaded.result else None
-    payload = output["corrected_output"] if output and output.get("corrected_output") else output.get("validated_output") if output else {}
-    return {
-        "kind": "required-checker",
-        "status": loaded.status,
-        "job_id": loaded.id,
-        "result_id": loaded.result_id,
-        "checklist_id": checklist_id,
-        "required_check": payload,
-        "result": output,
-    }
-
-
-_ORIGINAL_EXECUTE_CLASSIFIER_NODE = _execute_classifier_node
-_ORIGINAL_EXECUTE_KIE_NODE = _execute_kie_node
-_ORIGINAL_EXECUTE_REQUIRED_NODE = _execute_required_node
-
-
-def _execute_node_compat(item_id: str, document_id: str, node: dict[str, Any], executor) -> dict[str, Any]:
-    db = SessionLocal()
-    try:
-        item = db.get(WorkflowRunItem, item_id)
-        if not item:
-            raise WorkflowStopped()
-        return executor(db, document_id, node)
-    finally:
-        db.close()
-
-
 def _finalize_workflow_run(run_id: str, execution_generation: int | None = None) -> None:
     dispatch_next: tuple[str, int] | None = None
     db = SessionLocal()
@@ -1330,31 +1128,15 @@ def _finalize_workflow_run(run_id: str, execution_generation: int | None = None)
             return
         if execution_generation is not None and run.execution_generation != execution_generation:
             return
-        now = datetime.utcnow()
-        statuses = [item.status for item in run.items]
-        if not statuses:
-            run.status = "failed"
-            run.error_message = "Workflow run has no items"
-        elif run.status == "paused" or any(status == "paused" for status in statuses):
-            run.status = "paused"
-            run.completed_at = None
+        now = utcnow()
+        outcome = WorkflowRunLifecycle(run).finalize(now)
+        if outcome == WorkflowRunStatus.PAUSED:
             _accumulate_run_inference_duration(run, now)
             db.commit()
             return
-        elif any(status in {"queued", "running", "preprocessing", "waiting_for_document"} for status in statuses):
-            run.status = "running"
-            run.completed_at = None
+        if outcome == WorkflowRunStatus.RUNNING:
             db.commit()
             return
-        elif any(status == "failed" for status in statuses):
-            run.status = "completed_with_errors"
-        elif any(status == "needs_review" for status in statuses):
-            run.status = "needs_review"
-        elif all(status == "canceled" for status in statuses):
-            run.status = "canceled"
-        else:
-            run.status = "completed"
-        run.completed_at = now
         _accumulate_run_inference_duration(run, now)
         log_audit_event(
             db,
@@ -1364,7 +1146,7 @@ def _finalize_workflow_run(run_id: str, execution_generation: int | None = None)
             message=f"Workflow run finished with status {run.status}",
             metadata={"total_count": run.total_count},
         )
-        if run.status in WORKFLOW_QUEUE_ADVANCE_STATUSES:
+        if run.status in WORKFLOW_RUN_QUEUE_ADVANCE_STATUSES:
             dispatch_next = _activate_next_waiting_workflow_run(db, run, now)
         db.commit()
     finally:
@@ -1377,31 +1159,15 @@ def _activate_next_waiting_workflow_run(db: Session, completed_run: WorkflowRun,
     group_id = completed_run.workflow_run_group_id or completed_run.id
     next_run = (
         db.query(WorkflowRun)
-        .filter(WorkflowRun.workflow_run_group_id == group_id, WorkflowRun.status == "waiting")
+        .filter(WorkflowRun.workflow_run_group_id == group_id, WorkflowRun.status == WorkflowRunStatus.WAITING)
         .order_by(WorkflowRun.queue_order.asc(), WorkflowRun.created_at.asc(), WorkflowRun.id.asc())
         .first()
     )
     if not next_run:
         return None
 
-    queued_count = 0
-    next_run.execution_generation = (next_run.execution_generation or 0) + 1
-    next_run.status = "running"
-    next_run.completed_at = None
-    next_run.error_message = None
-    next_run.started_at = next_run.started_at or now
-    next_run.inference_started_at = now
-    for item in next_run.items:
-        if item.status == "queued":
-            item.error_message = None
-            item.completed_at = None
-            item.execution_generation = next_run.execution_generation
-            queued_count += 1
-
+    queued_count = WorkflowRunLifecycle(next_run).promote_waiting(now)
     if not queued_count:
-        next_run.status = "completed_with_errors"
-        next_run.completed_at = now
-        next_run.inference_started_at = None
         return None
 
     log_audit_event(
@@ -1422,20 +1188,15 @@ def _activate_next_waiting_workflow_run(db: Session, completed_run: WorkflowRun,
 
 
 def _dispatch_workflow_run_async(run_id: str, execution_generation: int) -> None:
-    thread = threading.Thread(target=run_workflow_run, args=(run_id, execution_generation), daemon=True)
-    thread.start()
+    from app.background_jobs import dispatch_jobs
+
+    dispatch_jobs(JobDispatch("workflow_run", (run_id, execution_generation)))
 
 
 def _fail_run(db: Session, run: WorkflowRun, message: str) -> None:
-    now = datetime.utcnow()
-    run.status = "failed"
-    run.error_message = message
-    run.completed_at = now
+    now = utcnow()
     _accumulate_run_inference_duration(run, now)
-    for item in run.items:
-        item.status = "failed"
-        item.error_message = message
-        item.completed_at = now
+    WorkflowRunLifecycle(run).fail(message, now)
     db.commit()
 
 
@@ -1443,21 +1204,16 @@ def _workflow_definition_json(workflow: WorkflowDefinition) -> dict[str, Any]:
     return _json_or_empty(workflow.definition_json)
 
 
-def _json_or_empty(raw: str | None) -> dict[str, Any]:
-    if not raw:
-        return {}
-    try:
-        parsed = json.loads(raw)
-        return parsed if isinstance(parsed, dict) else {}
-    except json.JSONDecodeError:
-        return {}
+def _json_or_empty(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
-def _json_dumps(payload: dict[str, Any]) -> str:
-    return json.dumps(payload, ensure_ascii=False, default=str)
+def _json_document(payload: dict[str, Any]) -> dict[str, Any]:
+    """A detached, JSON-normalised copy of ``payload`` to assign to a JSON column (e.g. datetimes become strings)."""
+    return json.loads(dumps_json_text(payload))
 
 
-def _validate_config_references(graph: WorkflowGraph, db: Session, *, workspace_id: str | None = None) -> list[str]:
+def _validate_config_references(graph: WorkflowGraph, db: Session) -> list[str]:
     errors: list[str] = []
     input_nodes = [node_id for node_id, node in graph.nodes.items() if _node_kind(node) == "input"]
     active_node_ids = _reachable_node_ids(graph, input_nodes[0]) if input_nodes else set(graph.nodes)
@@ -1468,22 +1224,38 @@ def _validate_config_references(graph: WorkflowGraph, db: Session, *, workspace_
         if kind == "classifier":
             classifier_id = _node_config_value(node, "classifier_id")
             classifier = db.get(DocumentClassifier, classifier_id) if classifier_id else None
-            if not classifier or classifier.archived or (workspace_id is not None and classifier.workspace_id != workspace_id):
+            if not classifier or classifier.archived:
                 errors.append(f"Classifier node {node_id} must select a saved classifier")
         if kind == "kie":
             schema_id = _node_config_value(node, "schema_id")
             schema = db.get(Schema, schema_id) if schema_id else None
-            if not schema or schema.archived or schema.ephemeral or (workspace_id is not None and schema.workspace_id != workspace_id):
+            if not schema or schema.archived or schema.ephemeral:
                 errors.append(f"KIE node {node_id} must select a saved schema")
+        if kind == "table":
+            errors.extend(_validate_table_node(node_id, node, db))
         if kind == "required-checker":
             checklist_id = _node_config_value(node, "checklist_id")
             checklist = db.get(RequiredFieldChecklist, checklist_id) if checklist_id else None
-            if not checklist or checklist.archived or (workspace_id is not None and checklist.workspace_id != workspace_id):
+            if not checklist or checklist.archived:
                 errors.append(f"Required Field Checker node {node_id} must select a saved checklist")
     return errors
 
 
-def _workflow_warnings(graph: WorkflowGraph, db: Session, *, workspace_id: str | None = None) -> list[str]:
+def _validate_table_node(node_id: str, node: dict[str, Any], db: Session) -> list[str]:
+    template_id = _node_config_value(node, "template_id")
+    template = db.get(TableTemplate, template_id) if template_id else None
+    if not template or template.archived or template.ephemeral:
+        return [f"Table node {node_id} must select a saved table template"]
+    try:
+        tables = _select_tables(_load_table_definition(template.definition_json), _node_config_list(node, "table_keys"))
+    except ValueError as exc:
+        return [f"Table node {node_id}: {exc}"]
+    if not tables:
+        return [f"Table node {node_id}: the table template has no tables to extract"]
+    return []
+
+
+def _workflow_warnings(graph: WorkflowGraph, db: Session) -> list[str]:
     warnings: list[str] = []
     input_nodes = [node_id for node_id, node in graph.nodes.items() if _node_kind(node) == "input"]
     if input_nodes:
@@ -1504,7 +1276,7 @@ def _workflow_warnings(graph: WorkflowGraph, db: Session, *, workspace_id: str |
         classifier_node = graph.nodes.get(incoming[0]["source"])
         classifier_id = _node_config_value(classifier_node or {}, "classifier_id")
         classifier = db.get(DocumentClassifier, classifier_id) if classifier_id else None
-        if not classifier or (workspace_id is not None and classifier.workspace_id != workspace_id):
+        if not classifier:
             continue
         config = _json_or_empty(classifier.config_json)
         for candidate in config.get("classes", []):
@@ -1519,38 +1291,39 @@ def _workflow_run_status(run: WorkflowRun, items: list[WorkflowRunItem]) -> str:
 
 
 def _workflow_run_status_from_counts(run: WorkflowRun, status_counts: dict[str, int]) -> str:
-    if run.status in WORKFLOW_TERMINAL_STATUSES or run.status in {"completed_with_errors", "failed"}:
+    if run.status in WORKFLOW_ITEM_TERMINAL_STATUSES or run.status in {WorkflowRunStatus.COMPLETED_WITH_ERRORS, WorkflowRunStatus.FAILED}:
         return run.status
-    if run.status == "waiting":
-        return "waiting"
-    if run.status == "paused":
-        return "paused"
+    if run.status == WorkflowRunStatus.WAITING:
+        return WorkflowRunStatus.WAITING
+    if run.status == WorkflowRunStatus.PAUSED:
+        return WorkflowRunStatus.PAUSED
     uploaded_count = sum(status_counts.values())
     if uploaded_count < run.total_count:
-        return "uploading"
+        return WorkflowRunStatus.UPLOADING
     if not uploaded_count:
         return run.status
-    if status_counts.get("preprocessing", 0) or status_counts.get("waiting_for_document", 0):
-        return "preprocessing"
-    if status_counts.get("running", 0):
-        return "running"
-    if status_counts.get("paused", 0):
-        return "paused"
-    if run.status == "running" and status_counts.get("queued", 0):
-        return "running"
-    if status_counts.get("queued", 0):
-        return "queued"
-    if status_counts.get("failed", 0):
-        return "completed_with_errors"
-    if status_counts.get("needs_review", 0):
-        return "needs_review"
-    return "completed"
+    if status_counts.get(WorkflowRunItemStatus.PREPROCESSING, 0) or status_counts.get(WorkflowRunItemStatus.WAITING_FOR_DOCUMENT, 0):
+        return WorkflowRunStatus.PREPROCESSING
+    if status_counts.get(WorkflowRunItemStatus.RUNNING, 0):
+        return WorkflowRunStatus.RUNNING
+    if status_counts.get(WorkflowRunItemStatus.PAUSED, 0):
+        return WorkflowRunStatus.PAUSED
+    if run.status == WorkflowRunStatus.RUNNING and status_counts.get(WorkflowRunItemStatus.QUEUED, 0):
+        return WorkflowRunStatus.RUNNING
+    if status_counts.get(WorkflowRunItemStatus.QUEUED, 0):
+        return WorkflowRunStatus.QUEUED
+    if status_counts.get(WorkflowRunItemStatus.FAILED, 0):
+        return WorkflowRunStatus.COMPLETED_WITH_ERRORS
+    if status_counts.get(WorkflowRunItemStatus.NEEDS_REVIEW, 0):
+        return WorkflowRunStatus.NEEDS_REVIEW
+    return WorkflowRunStatus.COMPLETED
 
 
-def _workflow_item_sort_key(item: WorkflowRunItem) -> tuple[int, int, str, str]:
+def _workflow_item_sort_key(item: WorkflowRunItem) -> tuple[int, int, str, int, str]:
+    page_number = item.page_number or 0
     if item.upload_index is None:
-        return (1, 0, item.filename.casefold(), item.id)
-    return (0, item.upload_index, item.filename.casefold(), item.id)
+        return (1, 0, item.filename.casefold(), page_number, item.id)
+    return (0, item.upload_index, item.filename.casefold(), page_number, item.id)
 
 
 def _workflow_item_status_counts(items: list[WorkflowRunItem]) -> dict[str, int]:
@@ -1583,32 +1356,28 @@ def _workflow_run_status_counts_for_runs(run_ids: list[str], db: Session) -> dic
 
 
 def _workflow_terminal_count(status_counts: dict[str, int]) -> int:
-    return sum(count for status, count in status_counts.items() if status in WORKFLOW_TERMINAL_STATUSES)
-
-
-def _workflow_run_counters(run: WorkflowRun, items: list[WorkflowRunItem]) -> dict[str, Any]:
-    return _workflow_run_counters_from_status_counts(run, _workflow_item_status_counts(items))
+    return sum(count for status, count in status_counts.items() if status in WORKFLOW_ITEM_TERMINAL_STATUSES)
 
 
 def _workflow_run_counters_from_status_counts(run: WorkflowRun, status_counts: dict[str, int]) -> dict[str, Any]:
     uploaded_count = sum(status_counts.values())
-    completed_count = status_counts.get("completed", 0)
+    completed_count = status_counts.get(WorkflowRunItemStatus.COMPLETED, 0)
     terminal_count = _workflow_terminal_count(status_counts)
-    preprocessing_count = status_counts.get("preprocessing", 0) + status_counts.get("waiting_for_document", 0)
-    queued_count = status_counts.get("queued", 0)
-    running_count = status_counts.get("running", 0)
-    canceled_count = status_counts.get("canceled", 0)
-    paused_count = status_counts.get("paused", 0)
+    preprocessing_count = status_counts.get(WorkflowRunItemStatus.PREPROCESSING, 0) + status_counts.get(WorkflowRunItemStatus.WAITING_FOR_DOCUMENT, 0)
+    queued_count = status_counts.get(WorkflowRunItemStatus.QUEUED, 0)
+    running_count = status_counts.get(WorkflowRunItemStatus.RUNNING, 0)
+    canceled_count = status_counts.get(WorkflowRunItemStatus.CANCELED, 0)
+    paused_count = status_counts.get(WorkflowRunItemStatus.PAUSED, 0)
     status = _workflow_run_status_from_counts(run, status_counts)
-    if status == "waiting":
+    if status == WorkflowRunStatus.WAITING:
         progress_phase = "waiting"
-    elif status == "paused" or paused_count:
+    elif status == WorkflowRunStatus.PAUSED or paused_count:
         progress_phase = "paused"
     elif uploaded_count < run.total_count:
         progress_phase = "uploading"
     elif preprocessing_count:
         progress_phase = "preprocessing"
-    elif running_count or (run.status == "running" and queued_count):
+    elif running_count or (run.status == WorkflowRunStatus.RUNNING and queued_count):
         progress_phase = "running"
     else:
         progress_phase = status
@@ -1674,11 +1443,39 @@ def _add_kie_review_export_columns(
     row[f"{column_prefix}_ai_correction_reason"] = ai_review.get("correction_reason")
 
 
-def _workflow_export_row(item: WorkflowRunItem) -> dict[str, Any]:
+def _workflow_run_has_rotation_node(run: WorkflowRun, items: list[WorkflowRunItem]) -> bool:
+    try:
+        definition = _workflow_definition_for_run(run, run.workflow)
+    except ValueError:
+        definition = {}
+    if any(_node_kind(node) == "rotation" for node in _build_graph(definition).nodes.values()):
+        return True
+    for item in items:
+        node_results = _json_or_empty(item.result_json).get("node_results")
+        if isinstance(node_results, dict) and any(
+            isinstance(result, dict) and result.get("kind") == "rotation" for result in node_results.values()
+        ):
+            return True
+    return False
+
+
+def _add_rotation_export_columns(row: dict[str, Any], node_results: dict[str, Any]) -> None:
+    corrections = [
+        correction
+        for result in node_results.values()
+        if isinstance(result, dict) and result.get("kind") == "rotation"
+        for correction in _applied_rotation_corrections(result)
+    ]
+    row["rotation_corrected_pages"] = len(corrections)
+    row["rotation_corrections"] = ",".join(f"p{entry['page_number']}:{entry['correction']}" for entry in corrections)
+
+
+def _workflow_export_row(item: WorkflowRunItem, *, include_rotation: bool = False) -> dict[str, Any]:
     result = _json_or_empty(item.result_json)
     classification = result.get("classification") if isinstance(result.get("classification"), dict) else {}
     row: dict[str, Any] = {
         "filename": item.filename,
+        "page_number": item.page_number,
         "document_id": item.document_id,
         "workflow_run_item_id": item.id,
         "status": item.status,
@@ -1711,18 +1508,28 @@ def _workflow_export_row(item: WorkflowRunItem) -> dict[str, Any]:
                 reviewed_fields,
                 key,
             )
+    for node_result in node_results.values():
+        if not isinstance(node_result, dict) or node_result.get("kind") != "table":
+            continue
+        for table in node_result.get("tables") or []:
+            if isinstance(table, dict) and table.get("key"):
+                row[f"table_{table['key']}_rows"] = table.get("row_count")
+                row[f"table_{table['key']}_status"] = table.get("status")
     row["required_overall_status"] = result.get("required_overall_status")
     required_items = result.get("required_items") if isinstance(result.get("required_items"), dict) else {}
     for item_name, entry in required_items.items():
         if isinstance(entry, dict):
             row[f"required_{item_name}_status"] = entry.get("status")
             row[f"required_{item_name}_evidence"] = entry.get("evidence")
+    if include_rotation:
+        _add_rotation_export_columns(row, node_results)
     return row
 
 
 def _workflow_export_fieldnames(rows: list[dict[str, Any]]) -> list[str]:
     base = [
         "filename",
+        "page_number",
         "document_id",
         "workflow_run_item_id",
         "status",

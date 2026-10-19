@@ -1,0 +1,190 @@
+/* 공용 표면 다듬기(카드·패널·배지). workflow 구간 15보다 앞, 모듈 구간보다 뒤에 둔다. */
+
+.danger-outline {
+  border-color: var(--tone-danger-fg);
+  color: var(--tone-danger-fg);
+}
+
+progress {
+  accent-color: var(--tds-blue-500);
+  width: 100%;
+}
+
+.status-badge {
+  border-radius: 999px;
+  font-size: 12px;
+  padding: 6px 9px;
+}
+
+.status-badge.completed {
+  background: var(--tone-success-bg);
+  color: var(--tds-blue-700);
+}
+
+.status-badge.needs_review {
+  background: var(--tone-warning-bg);
+  color: var(--tone-warning-fg);
+}
+
+.status-badge.running,
+.status-badge.queued {
+  background: var(--tds-blue-50);
+  color: var(--tds-blue-700);
+}
+
+.status-badge.failed,
+.status-badge.canceled {
+  background: var(--tone-danger-soft-bg);
+  color: var(--tone-danger-soft-fg);
+}
+
+.empty-state {
+  color: var(--tds-gray-700);
+  padding: 18px;
+}
+
+/* Product surface polish shared by modules and Workflow Builder. */
+.workspace,
+.workflow-builder {
+  gap: 16px;
+}
+
+.workflow-palette,
+.workflow-canvas-shell,
+.workflow-results,
+.workflow-item-detail {
+  border-color: var(--tds-gray-200);
+  border-radius: var(--tds-radius-lg);
+  box-shadow: var(--tds-shadow-card);
+}
+
+.pane-header,
+.workflow-toolbar,
+.workflow-results-header {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: var(--tds-gray-200);
+}
+
+.pane-header {
+  padding: 16px 18px;
+}
+
+.pane-header h2,
+.workflow-panel-header h2,
+.workflow-results-header h2 {
+  color: var(--tds-gray-900);
+  font-weight: 900;
+}
+
+.splitter {
+  background: var(--tds-gray-100);
+  border-color: var(--tds-gray-200);
+  border-radius: 999px;
+  color: var(--tds-gray-500);
+}
+
+.splitter:hover,
+.splitter:focus-visible {
+  background: var(--tds-blue-50);
+  border-color: var(--tds-blue-100);
+  color: var(--tds-blue-600);
+}
+
+.toolbar-upload,
+.workflow-upload {
+  background: var(--color-surface);
+  border-color: var(--tds-gray-200);
+  border-radius: var(--tds-radius-sm);
+  color: var(--tds-gray-900);
+}
+
+.module-table-wrap {
+  border-color: var(--tds-gray-200);
+  border-radius: var(--tds-radius-md);
+}
+
+.module-config-table th,
+.module-result-table th,
+.workflow-module-table th {
+  background: var(--tds-gray-100);
+  color: var(--tds-gray-600);
+}
+
+.module-config-table th,
+.module-config-table td,
+.module-result-table th,
+.module-result-table td {
+  border-color: var(--tds-gray-200);
+}
+
+.module-config-table input:focus,
+.module-config-table textarea:focus,
+.module-config-table select:focus {
+  border-color: var(--tds-blue-500);
+  box-shadow: 0 0 0 3px rgba(49, 130, 246, 0.12);
+}
+
+.thumbnail-rail,
+.workflow-run-rail {
+  background: var(--tds-gray-50);
+  border-color: var(--tds-gray-200);
+}
+
+.image-stage,
+.workflow-preview-stage {
+  background: var(--tds-gray-100);
+}
+
+.image-stage img {
+  border-radius: var(--tds-radius-md);
+  box-shadow: var(--tds-shadow-focus);
+}
+
+.thumbnail-rail button {
+  border-color: var(--tds-gray-200);
+  border-radius: var(--tds-radius-md);
+  color: var(--tds-gray-900);
+}
+
+.thumbnail-rail button.active-thumb {
+  background: var(--tds-blue-50);
+  border-color: var(--tds-blue-500);
+  box-shadow: 0 0 0 3px rgba(49, 130, 246, 0.1);
+}
+
+.workflow-run-progress {
+  accent-color: var(--tds-blue-500);
+}
+
+.workflow-builder {
+  grid-template-columns: minmax(220px, 270px) minmax(0, 1fr);
+}
+
+.workflow-palette {
+  padding: 16px;
+}
+
+.workflow-palette-item {
+  border-radius: var(--tds-radius-md);
+  min-height: 78px;
+  padding: 12px;
+}
+
+.workflow-canvas {
+  background: radial-gradient(circle at 1px 1px, rgba(78, 89, 104, 0.14) 1px, transparent 0), var(--color-surface);
+}
+
+.workflow-node {
+  border-radius: var(--tds-radius-md);
+  box-shadow: 0 10px 24px rgba(25, 31, 40, 0.08);
+  padding: 10px 12px;
+}
+
+.workflow-node.selected {
+  border-color: var(--tds-blue-500);
+  box-shadow: 0 0 0 4px rgba(49, 130, 246, 0.14);
+}
+
+.branch-handle-row.connected .branch-route-dot {
+  background: var(--tds-blue-500);
+}

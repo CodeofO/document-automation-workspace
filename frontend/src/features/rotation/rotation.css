@@ -1,0 +1,362 @@
+/* features/rotation: 회전 보정 결과 그리드·페이지 카드(워크플로우 결과 창도 RotationPageGrid로 쓴다). 토큰만 쓴다. */
+
+/* Rotation correction module */
+.rotation-layout {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.rotation-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.rotation-note {
+  background: var(--tds-blue-50);
+  border-radius: var(--tds-radius-sm);
+  color: var(--tds-gray-700);
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 12px 0;
+  padding: 10px 12px;
+}
+
+.rotation-control-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rotation-upload-button {
+  align-items: center;
+  border: 1px solid var(--tds-gray-200);
+  border-radius: var(--tds-radius-sm);
+  cursor: pointer;
+  display: inline-flex;
+  gap: 8px;
+  min-height: 38px;
+  padding: 8px 12px;
+  position: relative;
+}
+
+.rotation-upload-button:hover {
+  background: var(--tds-gray-100);
+}
+
+.rotation-upload-button.disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.rotation-upload-button input {
+  cursor: inherit;
+  inset: 0;
+  opacity: 0;
+  position: absolute;
+}
+
+.rotation-selection {
+  margin-top: 12px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.rotation-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.rotation-history-list button {
+  align-items: flex-start;
+  background: var(--color-surface);
+  flex-direction: column;
+  gap: 2px;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.rotation-history-list button.active {
+  background: var(--tds-blue-50);
+  border-color: var(--tds-blue-200);
+}
+
+.rotation-history-list small,
+.rotation-item-head small,
+.rotation-page-card small {
+  color: var(--tds-gray-600);
+  font-size: 12px;
+}
+
+.rotation-result-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.rotation-progress {
+  width: 100%;
+}
+
+.rotation-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rotation-filter-row button {
+  background: var(--color-surface);
+  border-radius: 999px;
+  font-size: 13px;
+  min-height: 30px;
+  padding: 4px 12px;
+}
+
+.rotation-filter-row button.active {
+  background: var(--tds-blue-50);
+  border-color: var(--tds-blue-200);
+  color: var(--tds-blue-700);
+}
+
+.rotation-item-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.rotation-item-card {
+  border: 1px solid var(--tds-gray-200);
+  border-radius: var(--tds-radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.rotation-item-card.needs_review {
+  border-color: var(--tone-warning-bg);
+}
+
+.rotation-item-card.failed {
+  border-color: var(--tone-danger-bg);
+}
+
+.rotation-item-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.rotation-item-head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rotation-item-head strong {
+  overflow-wrap: anywhere;
+}
+
+.rotation-item-status {
+  background: var(--tds-gray-100);
+  border-radius: 999px;
+  color: var(--tds-gray-700);
+  flex: 0 0 auto;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.rotation-item-status.running,
+.rotation-item-status.queued,
+.rotation-item-status.waiting_for_document {
+  background: var(--tds-blue-50);
+  color: var(--tds-blue-600);
+}
+
+.rotation-item-status.completed {
+  background: var(--tone-success-bg);
+  color: var(--tone-success-fg);
+}
+
+.rotation-item-status.needs_review {
+  background: var(--tds-yellow-50);
+  color: var(--tds-yellow-700);
+}
+
+.rotation-item-status.failed {
+  background: var(--tds-red-50);
+  color: var(--tds-red-500);
+}
+
+.rotation-page-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+
+.rotation-page-card {
+  background: var(--color-surface);
+  border: 1px solid var(--tds-gray-200);
+  border-radius: var(--tds-radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+}
+
+.rotation-page-card.corrected {
+  border-color: var(--tone-success-bg);
+}
+
+.rotation-page-card.review {
+  background: var(--tds-gray-50);
+  border-color: var(--tone-warning-bg);
+}
+
+.rotation-page-thumb {
+  align-items: center;
+  background: var(--tds-gray-100);
+  border-radius: 8px;
+  display: flex;
+  height: 160px;
+  justify-content: center;
+  overflow: hidden;
+  position: relative;
+}
+
+.rotation-page-thumb img {
+  max-height: 100%;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.rotation-page-busy {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.7);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  position: absolute;
+}
+
+.rotation-page-meta {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  justify-content: space-between;
+  margin-top: 4px;
+}
+
+.rotation-page-card small.rotation-page-manual {
+  color: var(--tds-blue-600);
+}
+
+.rotation-page-reason summary {
+  color: var(--tds-gray-600);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.rotation-page-reason p {
+  color: var(--tds-gray-700);
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 4px 0 0;
+}
+
+.rotation-page-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.rotation-page-actions button {
+  flex: 1;
+  font-size: 12px;
+  gap: 3px;
+  min-height: 28px;
+  padding: 2px 4px;
+}
+
+.rotation-empty-state {
+  align-items: center;
+  color: var(--tds-gray-600);
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: center;
+  padding: 48px 16px;
+  text-align: center;
+}
+
+.rotation-empty-state strong {
+  color: var(--tds-gray-900);
+}
+
+.rotation-empty,
+.rotation-more {
+  align-self: center;
+}
+
+.workflow-rotation-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.workflow-rotation-summary {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.workflow-rotation-summary small {
+  color: var(--tds-gray-600);
+  font-size: 12px;
+}
+
+.workflow-rotation-result .rotation-page-grid {
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+}
+
+.workflow-rotation-result .rotation-page-thumb {
+  height: 120px;
+}
+
+@media (max-width: 980px) {
+  .rotation-layout {
+    grid-template-columns: minmax(0, 1fr);
+    overflow-y: auto;
+  }
+}
+
+/* features/rotation 전용 스타일 (styles/index.css에서 import) */
+
+/* 진행 상태·메시지·오류(InlineAlert) 묶음. 예전 .module-status-card 자리. */
+.rotation-status-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rotation-result-card .ui-empty-state {
+  flex: 1;
+}

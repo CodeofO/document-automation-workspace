@@ -3,7 +3,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-
 OutputFormat = Literal[
     "string",
     "float",
@@ -92,11 +91,7 @@ class SchemaCreate(BaseModel):
         if len(region_ids) != len(set(region_ids)):
             raise ValueError("schema region ids must be unique")
         missing_region_ids = sorted(
-            {
-                field.region_id
-                for field in self.fields
-                if field.region_id and field.region_id not in set(region_ids)
-            }
+            {field.region_id for field in self.fields if field.region_id and field.region_id not in set(region_ids)}
         )
         if missing_region_ids:
             raise ValueError(f"schema field region_id values are missing from regions: {', '.join(missing_region_ids)}")
@@ -130,11 +125,7 @@ class SchemaUpdate(BaseModel):
             if len(region_ids) != len(set(region_ids)):
                 raise ValueError("schema region ids must be unique")
             missing_region_ids = sorted(
-                {
-                    field.region_id
-                    for field in self.fields
-                    if field.region_id and field.region_id not in set(region_ids)
-                }
+                {field.region_id for field in self.fields if field.region_id and field.region_id not in set(region_ids)}
             )
             if missing_region_ids:
                 raise ValueError(f"schema field region_id values are missing from regions: {', '.join(missing_region_ids)}")
@@ -165,6 +156,7 @@ class DocumentPageRead(BaseModel):
     image_url: str
     width: int
     height: int
+    rotation_applied: int = 0
 
 
 class DocumentRead(BaseModel):
@@ -243,6 +235,60 @@ class RequiredFieldCheckBatchFromDocumentsRequest(DocumentSelectionRequest):
 
 class WorkflowRunFromDocumentsRequest(DocumentSelectionRequest):
     pass
+
+
+class RotationBatchFromDocumentsRequest(DocumentSelectionRequest):
+    pass
+
+
+class PageRotateRequest(BaseModel):
+    degrees: Literal[90, 180, 270]
+
+
+class RotationPageResultRead(BaseModel):
+    page_number: int
+    status: str
+    applied: bool = False
+    correction: int = 0
+    detected_rotation: int = 0
+    confidence: float | None = None
+    reason: str = ""
+    rotation_before: int = 0
+    rotation_after: int = 0
+
+
+class RotationBatchItemRead(BaseModel):
+    id: str
+    document_id: str
+    job_id: str
+    filename: str
+    upload_index: int | None = None
+    status: str
+    error_message: str | None = None
+    corrected_page_count: int = 0
+    pages: list[RotationPageResultRead] = Field(default_factory=list)
+    created_at: datetime
+
+
+class RotationBatchRead(BaseModel):
+    id: str
+    status: str
+    total_count: int
+    completed_count: int
+    failed_count: int
+    canceled_count: int
+    uploaded_count: int = 0
+    preprocessing_count: int = 0
+    ready_count: int = 0
+    queued_count: int = 0
+    running_count: int = 0
+    needs_review_count: int = 0
+    corrected_page_count: int = 0
+    progress_phase: str = "queued"
+    progress: float
+    items: list[RotationBatchItemRead]
+    created_at: datetime
+    completed_at: datetime | None
 
 
 class RawExtractionFromDocumentRequest(BaseModel):
@@ -338,11 +384,7 @@ class SchemaDescriptionRecommendationRequest(BaseModel):
             raise ValueError("schema field key_name values must be unique")
         region_ids = [region.id for region in self.regions]
         missing_region_ids = sorted(
-            {
-                field.region_id
-                for field in self.fields
-                if field.region_id and field.region_id not in set(region_ids)
-            }
+            {field.region_id for field in self.fields if field.region_id and field.region_id not in set(region_ids)}
         )
         if missing_region_ids:
             raise ValueError(f"schema field region_id values are missing from regions: {', '.join(missing_region_ids)}")
@@ -354,10 +396,12 @@ class SchemaDescriptionRecommendationRead(BaseModel):
     reasoning: str | None = None
 
 
-ClassificationStatus = Literal["classified", "unknown"]
 RequiredFieldEvidenceType = str
-RequiredFieldItemStatus = Literal["present", "missing", "uncertain", "not_applicable"]
-RequiredFieldOverallStatus = Literal["complete", "incomplete", "needs_review"]
+
+
+class PageJobRef(BaseModel):
+    job_id: str
+    page_number: int | None = None
 
 
 class ClassCandidate(BaseModel):
@@ -431,6 +475,9 @@ class DocumentClassifierRead(BaseModel):
 
 class ClassificationJobCreate(BaseModel):
     document_id: str
+    # Page to process. Omitted: page 1 of a single-page document, or one job per page of a multi-page document
+    # (the response is the first page's job and ``page_jobs`` lists them all).
+    page_number: int | None = Field(default=None, ge=1)
     classifier_id: str
 
 
@@ -448,6 +495,7 @@ class ClassificationResultRead(BaseModel):
 class ClassificationJobRead(BaseModel):
     job_id: str
     document_id: str
+    page_number: int | None = None  # 1-based page this unit covers; null = whole document (legacy rows)
     classifier_id: str
     status: str
     error_message: str | None
@@ -456,6 +504,7 @@ class ClassificationJobRead(BaseModel):
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
+    page_jobs: list[PageJobRef] = Field(default_factory=list)  # set on creation when one job per page was created
 
 
 class ClassificationResultPatch(BaseModel):
@@ -466,6 +515,7 @@ class ClassificationResultPatch(BaseModel):
 class ClassificationBatchItemRead(BaseModel):
     id: str
     document_id: str
+    page_number: int | None = None  # 1-based page this unit covers; null = whole document (legacy rows)
     job_id: str
     filename: str
     upload_index: int | None = None
@@ -587,6 +637,9 @@ class RequiredFieldChecklistRecommendationRead(BaseModel):
 
 class RequiredFieldCheckJobCreate(BaseModel):
     document_id: str
+    # Page to process. Omitted: page 1 of a single-page document, or one job per page of a multi-page document
+    # (the response is the first page's job and ``page_jobs`` lists them all).
+    page_number: int | None = Field(default=None, ge=1)
     checklist_id: str
 
 
@@ -604,6 +657,7 @@ class RequiredFieldCheckResultRead(BaseModel):
 class RequiredFieldCheckJobRead(BaseModel):
     job_id: str
     document_id: str
+    page_number: int | None = None  # 1-based page this unit covers; null = whole document (legacy rows)
     checklist_id: str
     status: str
     error_message: str | None
@@ -612,6 +666,7 @@ class RequiredFieldCheckJobRead(BaseModel):
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
+    page_jobs: list[PageJobRef] = Field(default_factory=list)  # set on creation when one job per page was created
 
 
 class RequiredFieldCheckResultPatch(BaseModel):
@@ -622,6 +677,7 @@ class RequiredFieldCheckResultPatch(BaseModel):
 class RequiredFieldCheckBatchItemRead(BaseModel):
     id: str
     document_id: str
+    page_number: int | None = None  # 1-based page this unit covers; null = whole document (legacy rows)
     job_id: str
     filename: str
     upload_index: int | None = None
@@ -667,23 +723,22 @@ def _validate_required_checklist(items: list[RequiredFieldItem], regions: list[S
 
 class ExtractionJobCreate(BaseModel):
     document_id: str
+    # Page to process. Omitted: page 1 of a single-page document, or one job per page of a multi-page document
+    # (the response is the first page's job and ``page_jobs`` lists them all).
+    page_number: int | None = Field(default=None, ge=1)
     schema_id: str
     options: dict[str, Any] = Field(default_factory=dict)
 
 
 class DraftExtractionJobCreate(BaseModel):
     document_id: str
+    # Page to process. Omitted: page 1 of a single-page document, or one job per page of a multi-page document
+    # (the response is the first page's job and ``page_jobs`` lists them all).
+    page_number: int | None = Field(default=None, ge=1)
     schema_definition: SchemaCreate = Field(alias="schema")
     options: dict[str, Any] = Field(default_factory=dict)
 
 
-class ExtractionValue(BaseModel):
-    value: Any
-    normalized_value: Any = None
-    page: int | None = None
-    confidence: float | None = None
-    evidence: str | None = None
-    warnings: list[str] = Field(default_factory=list)
 
 
 class ExtractionResultRead(BaseModel):
@@ -701,6 +756,7 @@ class ExtractionResultRead(BaseModel):
 class ExtractionJobRead(BaseModel):
     job_id: str
     document_id: str
+    page_number: int | None = None  # 1-based page this unit covers; null = whole document (legacy rows)
     schema_id: str
     status: str
     error_message: str | None
@@ -709,6 +765,7 @@ class ExtractionJobRead(BaseModel):
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
+    page_jobs: list[PageJobRef] = Field(default_factory=list)  # set on creation when one job per page was created
 
 
 class ExtractionResultPatch(BaseModel):
@@ -731,17 +788,6 @@ class SystemStatusRead(BaseModel):
     document_page_jpeg_quality: int
 
 
-class UploadOwnerCounters(BaseModel):
-    uploaded_count: int = 0
-    preprocessing_count: int = 0
-    ready_count: int = 0
-    queued_count: int = 0
-    running_count: int = 0
-    completed_count: int = 0
-    failed_count: int = 0
-    canceled_count: int = 0
-    needs_review_count: int = 0
-    progress_phase: str = "queued"
 
 
 class BatchInitRequest(BaseModel):
@@ -762,6 +808,7 @@ class RequiredFieldCheckBatchInitRequest(BaseModel):
 class BatchItemRead(BaseModel):
     id: str
     document_id: str
+    page_number: int | None = None  # 1-based page this unit covers; null = whole document (legacy rows)
     job_id: str
     filename: str
     upload_index: int | None = None
@@ -819,7 +866,7 @@ class ExportPresetRead(BaseModel):
     updated_at: datetime
 
 
-ExportJobOwnerType = Literal["workflow_run", "batch", "classification_batch", "required_field_check_batch"]
+ExportJobOwnerType = Literal["workflow_run", "batch", "classification_batch", "required_field_check_batch", "table_extraction_batch"]
 ExportJobFormat = Literal["json", "csv", "xlsx"]
 
 
@@ -891,6 +938,7 @@ class WorkflowRunItemRead(BaseModel):
     id: str
     run_id: str
     document_id: str
+    page_number: int | None = None  # 1-based page this unit covers; null = whole document (legacy rows)
     filename: str
     upload_index: int | None = None
     status: str

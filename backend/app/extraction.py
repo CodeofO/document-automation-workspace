@@ -1,7 +1,5 @@
 import asyncio
-import json
 from dataclasses import dataclass
-from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
@@ -10,30 +8,18 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 
 from app.audit import log_audit_event
 from app.concurrency import gather_workflow_limited, run_workflow_blocking
-from app.config import get_settings
-from app.database import SessionLocal
+from app.core.clock import utcnow
+from app.core.config import get_settings
+from app.core.db import SessionLocal
+from app.domain.batch import BatchLifecycle, batch_outcome
+from app.domain.module_job import ModuleJobLifecycle
+from app.domain.status import MODULE_JOB_PENDING_STATUSES, MODULE_JOB_TERMINAL_STATUSES, JudgementStatus, ModuleJobStatus
 from app.models import Document, ExtractionJob, ExtractionResult, Schema
 from app.schemas import FieldDefinition, FieldRegion, SchemaRegion
 from app.storage import materialize_storage_ref, scratch_dir_for_ref
 from app.validation import validate_extracted_values
-from app.vlm import (
-    correct_extraction_with_vlm,
-    correct_extraction_with_vlm_async,
-    extract_with_vlm,
-    extract_with_vlm_async,
-    format_vlm_exception,
-    judge_extraction_with_vlm,
-    judge_extraction_with_vlm_async,
-    run_sync_with_vlm_limit_async,
-)
+from app.vlm import format_vlm_exception, get_vlm_gateway
 
-
-_ORIGINAL_EXTRACT_WITH_VLM = extract_with_vlm
-_ORIGINAL_JUDGE_EXTRACTION_WITH_VLM = judge_extraction_with_vlm
-_ORIGINAL_CORRECT_EXTRACTION_WITH_VLM = correct_extraction_with_vlm
-
-
-TERMINAL_JOB_STATUSES = {"completed", "needs_review", "failed", "canceled"}
 MIN_AI_CORRECTION_CONFIDENCE = 0.85
 MIN_HANGUL_CORRECTION_SIMILARITY = 0.65
 
@@ -59,13 +45,6 @@ class ExtractionContext:
     regions: list[SchemaRegion]
 
 
-def run_extraction_job(job_id: str) -> None:
-    asyncio.run(run_extraction_job_async(job_id))
-
-
-_ORIGINAL_RUN_EXTRACTION_JOB = run_extraction_job
-
-
 async def run_extraction_job_async(job_id: str) -> None:
     try:
         context = await run_workflow_blocking(_prepare_extraction_job, job_id)
@@ -79,16 +58,12 @@ async def run_extraction_job_async(job_id: str) -> None:
         await run_workflow_blocking(_mark_job_failed, job_id, format_vlm_exception(exc))
 
 
-def run_batch_jobs(batch_id: str, job_ids: list[str]) -> None:
-    asyncio.run(run_batch_jobs_async(batch_id, job_ids))
-
-
 async def run_batch_jobs_async(batch_id: str, job_ids: list[str]) -> None:
     if not job_ids:
         await run_workflow_blocking(_finalize_batch, batch_id)
         return
     try:
-        results = await gather_workflow_limited(job_ids, _run_batch_extraction_job_async, return_exceptions=True)
+        results = await gather_workflow_limited(job_ids, run_extraction_job_async, return_exceptions=True)
         for job_id, result in zip(job_ids, results, strict=True):
             if isinstance(result, Exception):
                 await run_workflow_blocking(_mark_job_failed, job_id, f"Batch worker failed: {result}")
@@ -100,39 +75,29 @@ async def run_batch_jobs_async(batch_id: str, job_ids: list[str]) -> None:
         await run_workflow_blocking(_finalize_batch, batch_id)
 
 
-async def _run_batch_extraction_job_async(job_id: str) -> None:
-    if run_extraction_job is not _ORIGINAL_RUN_EXTRACTION_JOB:
-        await run_workflow_blocking(run_extraction_job, job_id)
-        return
-    await run_extraction_job_async(job_id)
-
-
 def _prepare_extraction_job(job_id: str) -> ExtractionContext | None:
     db = SessionLocal()
     try:
         job = db.get(ExtractionJob, job_id)
         if not job:
             return None
-        if job.status != "queued":
+        if job.status != ModuleJobStatus.QUEUED:
             return None
 
-        job.status = "running"
-        job.started_at = datetime.utcnow()
+        ModuleJobLifecycle(job).mark_running(utcnow())
         db.commit()
         document = db.get(Document, job.document_id)
         schema = db.get(Schema, job.schema_id)
         if not document or not schema:
             raise RuntimeError("Document or schema not found")
-        if not schema.schema_json or schema.schema_json == "{}":
+        schema_data = schema.schema_json
+        if not schema_data:
             raise RuntimeError("Schema data is missing")
 
-        schema_data = json.loads(schema.schema_json)
         fields = [FieldDefinition(**field) for field in schema_data["fields"]]
         regions = [SchemaRegion(**region) for region in schema_data.get("regions", [])]
-        pages = [
-            DocumentPageSnapshot(page_number=page.page_number, image_path=page.image_path)
-            for page in sorted(document.pages, key=lambda item: item.page_number)
-        ]
+        pages = page_scoped_snapshots(document, job.page_number)
+        fields, regions = fields_on_page(fields, regions, job.page_number)
         return ExtractionContext(
             document=DocumentSnapshot(id=document.id, storage_path=document.storage_path, pages=pages),
             schema_id=job.schema_id,
@@ -141,6 +106,48 @@ def _prepare_extraction_job(job_id: str) -> ExtractionContext | None:
         )
     finally:
         db.close()
+
+
+def page_scoped_snapshots(document: Document, page_number: int | None) -> list[DocumentPageSnapshot]:
+    """The page images a job sends to the VLM: only ``page_number``, or every page for legacy whole-document jobs.
+
+    ``DocumentPage.image_path`` is read at preparation time, so a rotation-corrected page is used as corrected.
+    """
+    pages = [
+        DocumentPageSnapshot(page_number=page.page_number, image_path=page.image_path)
+        for page in sorted(document.pages, key=lambda item: item.page_number)
+    ]
+    if page_number is None:
+        return pages
+    scoped = [page for page in pages if page.page_number == page_number]
+    if not scoped:
+        raise RuntimeError(f"Page {page_number} does not exist in this document")
+    return scoped
+
+
+def regions_on_page(regions: list[SchemaRegion], page_number: int | None) -> list[SchemaRegion]:
+    if page_number is None:
+        return regions
+    return [region for region in regions if region.page == page_number]
+
+
+def fields_on_page(
+    fields: list[FieldDefinition],
+    regions: list[SchemaRegion],
+    page_number: int | None,
+) -> tuple[list[FieldDefinition], list[SchemaRegion]]:
+    """Keep full-page fields plus fields whose region lies on ``page_number`` (regions on other pages are skipped)."""
+    if page_number is None:
+        return fields, regions
+    region_pages = {region.id: region.page for region in regions}
+    kept: list[FieldDefinition] = []
+    for field in fields:
+        if field.region_id and field.region_id in region_pages and region_pages[field.region_id] != page_number:
+            continue
+        if not field.region_id and field.region is not None and field.region.page != page_number:
+            continue
+        kept.append(field)
+    return kept, regions_on_page(regions, page_number)
 
 
 def _save_extraction_result(
@@ -155,7 +162,7 @@ def _save_extraction_result(
         job = db.get(ExtractionJob, job_id)
         if not job:
             return
-        if job.status == "canceled":
+        if job.status == ModuleJobStatus.CANCELED:
             log_audit_event(
                 db,
                 entity_type="extraction_job",
@@ -170,117 +177,32 @@ def _save_extraction_result(
         validated_output = {
             "document_id": context.document.id,
             "schema_id": context.schema_id,
-            "status": "needs_review" if warnings else "completed",
+            "status": ModuleJobStatus.NEEDS_REVIEW if warnings else ModuleJobStatus.COMPLETED,
             "values": values,
         }
 
         result = ExtractionResult(
             job_id=job.id,
-            raw_model_output=json.dumps(raw_values, ensure_ascii=False),
-            validated_output=json.dumps(validated_output, ensure_ascii=False),
-            validation_warnings=json.dumps(warnings, ensure_ascii=False),
+            raw_model_output=raw_values,
+            validated_output=validated_output,
+            validation_warnings=warnings,
         )
         db.add(result)
         db.flush()
 
         job.result_id = result.id
-        job.status = "needs_review" if warnings else "completed"
-        job.completed_at = datetime.utcnow()
+        ModuleJobLifecycle(job).finish(needs_review=bool(warnings), now=utcnow())
         log_audit_event(
             db,
             entity_type="extraction_job",
             entity_id=job.id,
             action=job.status,
-            message="Extraction completed" if job.status == "completed" else "Extraction completed with review warnings",
+            message="Extraction completed" if job.status == ModuleJobStatus.COMPLETED else "Extraction completed with review warnings",
             metadata={"result_id": result.id, "warning_count": len(warnings)},
         )
         db.commit()
     finally:
         db.close()
-
-
-def _apply_ai_judgement(
-    document: DocumentSnapshot,
-    fields: list[FieldDefinition],
-    regions: list[SchemaRegion],
-    job_id: str,
-    values: dict[str, dict[str, Any]],
-    warnings: list[str],
-) -> tuple[dict[str, dict[str, Any]], list[str]]:
-    review_fields = [field for field in fields if field.judgement_enabled]
-    if not review_fields:
-        return values, warnings
-
-    inputs_by_field = _build_judgement_inputs(document, review_fields, regions, job_id)
-    next_values = dict(values)
-    next_warnings = list(warnings)
-
-    for field in review_fields:
-        current = dict(next_values.get(field.key_name, {}))
-        initial_value = current.get("value")
-        initial_evidence = current.get("evidence") if isinstance(current.get("evidence"), str) else None
-        image_inputs = inputs_by_field.get(field.key_name)
-        ai_review: dict[str, Any] = {
-            "enabled": True,
-            "mode": "region" if field.region_id or field.region is not None else "full_page",
-            "judgement_status": "failed",
-            "judgement_reason": None,
-            "judgement_confidence": None,
-            "initial_value": initial_value,
-            "initial_evidence": initial_evidence,
-            "corrected": False,
-            "correction_reason": None,
-        }
-
-        if not image_inputs:
-            _append_field_warning(current, next_warnings, field.key_name, "ai_review_failed")
-            ai_review["judgement_reason"] = "AI review images could not be prepared."
-            current["ai_review"] = ai_review
-            next_values[field.key_name] = current
-            continue
-
-        try:
-            judgement = judge_extraction_with_vlm(field, initial_value, initial_evidence, image_inputs)
-            status = judgement.get("judgement_status")
-            if status not in {"correct", "needs_correction"}:
-                raise RuntimeError(f"Unsupported judgement_status: {status}")
-            ai_review["judgement_status"] = status
-            ai_review["judgement_reason"] = str(judgement.get("reason") or "")
-            confidence = judgement.get("confidence")
-            ai_review["judgement_confidence"] = float(confidence) if isinstance(confidence, (int, float)) else None
-            if status == "needs_correction":
-                correction = correct_extraction_with_vlm(field, initial_value, initial_evidence, ai_review["judgement_reason"], image_inputs)
-                corrected_values, correction_warnings = validate_extracted_values({field.key_name: correction}, [field])
-                corrected_entry = dict(corrected_values[field.key_name])
-                rejection_warning = _correction_rejection_warning(initial_value, corrected_entry)
-                if rejection_warning:
-                    ai_review["correction_reason"] = _correction_rejection_reason(rejection_warning, correction)
-                    _append_field_warning(current, next_warnings, field.key_name, rejection_warning)
-                    current["ai_review"] = ai_review
-                    next_values[field.key_name] = current
-                    continue
-                corrected_entry["ai_review"] = {
-                    **ai_review,
-                    "corrected": True,
-                    "correction_reason": str(correction.get("correction_reason") or ""),
-                }
-                next_values[field.key_name] = corrected_entry
-                next_warnings = [warning for warning in next_warnings if not warning.startswith(f"{field.key_name}:")]
-                next_warnings.extend(correction_warnings)
-                continue
-        except Exception as exc:
-            warning = "ai_correction_failed" if ai_review["judgement_status"] == "needs_correction" else "ai_review_failed"
-            _append_field_warning(current, next_warnings, field.key_name, warning)
-            if warning == "ai_correction_failed":
-                ai_review["correction_reason"] = str(exc)
-            else:
-                ai_review["judgement_reason"] = str(exc)
-            ai_review["judgement_status"] = "failed"
-
-        current["ai_review"] = ai_review
-        next_values[field.key_name] = current
-
-    return next_values, next_warnings
 
 
 async def _apply_ai_judgement_async(
@@ -339,16 +261,18 @@ async def _apply_single_field_judgement_async(
         return field.key_name, current, local_warnings, False
 
     try:
-        judgement = await _call_judge_extraction_with_vlm_async(field, initial_value, initial_evidence, image_inputs)
+        judgement = await get_vlm_gateway().judge_extraction(field, initial_value, initial_evidence, image_inputs)
         status = judgement.get("judgement_status")
-        if status not in {"correct", "needs_correction"}:
+        if status not in set(JudgementStatus):
             raise RuntimeError(f"Unsupported judgement_status: {status}")
         ai_review["judgement_status"] = status
         ai_review["judgement_reason"] = str(judgement.get("reason") or "")
         confidence = judgement.get("confidence")
         ai_review["judgement_confidence"] = float(confidence) if isinstance(confidence, (int, float)) else None
-        if status == "needs_correction":
-            correction = await _call_correct_extraction_with_vlm_async(field, initial_value, initial_evidence, ai_review["judgement_reason"], image_inputs)
+        if status == JudgementStatus.NEEDS_CORRECTION:
+            correction = await get_vlm_gateway().correct_extraction(
+                field, initial_value, initial_evidence, ai_review["judgement_reason"], image_inputs
+            )
             corrected_values, correction_warnings = validate_extracted_values({field.key_name: correction}, [field])
             corrected_entry = dict(corrected_values[field.key_name])
             rejection_warning = _correction_rejection_warning(initial_value, corrected_entry)
@@ -364,7 +288,7 @@ async def _apply_single_field_judgement_async(
             }
             return field.key_name, corrected_entry, correction_warnings, True
     except Exception as exc:
-        warning = "ai_correction_failed" if ai_review["judgement_status"] == "needs_correction" else "ai_review_failed"
+        warning = "ai_correction_failed" if ai_review["judgement_status"] == JudgementStatus.NEEDS_CORRECTION else "ai_review_failed"
         _append_field_warning(current, local_warnings, field.key_name, warning)
         if warning == "ai_correction_failed":
             ai_review["correction_reason"] = str(exc)
@@ -487,11 +411,9 @@ def _mark_job_failed(job_id: str, message: str) -> None:
     db = SessionLocal()
     try:
         job = db.get(ExtractionJob, job_id)
-        if not job or job.status in TERMINAL_JOB_STATUSES:
+        if not job or job.status in MODULE_JOB_TERMINAL_STATUSES:
             return
-        job.status = "failed"
-        job.error_message = message
-        job.completed_at = datetime.utcnow()
+        ModuleJobLifecycle(job).fail(message, utcnow())
         log_audit_event(
             db,
             entity_type="extraction_job",
@@ -516,23 +438,19 @@ def _finalize_batch(batch_id: str) -> None:
 
         jobs = [item.job for item in batch.items if item.job]
         if not jobs:
-            batch.status = "failed"
-            batch.completed_at = datetime.utcnow()
+            BatchLifecycle(batch).fail_without_jobs(utcnow())
             db.commit()
             return
 
-        active = [job for job in jobs if job.status in {"queued", "running", "waiting_for_document"}]
+        active = [job for job in jobs if job.status in MODULE_JOB_PENDING_STATUSES]
         if active:
-            batch.status = "running"
-            batch.completed_at = None
+            BatchLifecycle(batch).keep_running()
             db.commit()
             return
 
-        unfinished = [job for job in jobs if job.status not in TERMINAL_JOB_STATUSES]
+        unfinished = [job for job in jobs if job.status not in MODULE_JOB_TERMINAL_STATUSES]
         for job in unfinished:
-            job.status = "failed"
-            job.error_message = "Batch worker finished before this job reached a terminal status"
-            job.completed_at = datetime.utcnow()
+            ModuleJobLifecycle(job).fail("Batch worker finished before this job reached a terminal status", utcnow())
             log_audit_event(
                 db,
                 entity_type="extraction_job",
@@ -542,18 +460,9 @@ def _finalize_batch(batch_id: str) -> None:
                 metadata={"document_id": job.document_id, "schema_id": job.schema_id},
             )
 
-        statuses = [job.status for job in jobs]
-        failed_or_canceled = any(status in {"failed", "canceled"} for status in statuses)
-        if all(status == "canceled" for status in statuses):
-            next_status = "canceled"
-        elif failed_or_canceled:
-            next_status = "completed_with_errors"
-        else:
-            next_status = "completed"
-
+        next_status = batch_outcome(job.status for job in jobs)
         if batch.status != next_status or batch.completed_at is None:
-            batch.status = next_status
-            batch.completed_at = datetime.utcnow()
+            BatchLifecycle(batch).finish(next_status, utcnow())
             log_audit_event(
                 db,
                 entity_type="batch",
@@ -567,15 +476,6 @@ def _finalize_batch(batch_id: str) -> None:
         db.close()
 
 
-def _extract_grouped_values(
-    document: DocumentSnapshot,
-    fields: list[FieldDefinition],
-    regions: list[SchemaRegion],
-    job_id: str,
-) -> dict[str, Any]:
-    return asyncio.run(_extract_grouped_values_async(document, fields, regions, job_id))
-
-
 async def _extract_grouped_values_async(
     document: DocumentSnapshot,
     fields: list[FieldDefinition],
@@ -585,14 +485,12 @@ async def _extract_grouped_values_async(
     requests = await run_workflow_blocking(_build_extraction_requests, document, fields, regions, job_id)
     if not requests:
         return {}
+    gateway = get_vlm_gateway()
     if len(requests) == 1:
-        return await _call_extract_with_vlm_async(requests[0]["fields"], image_inputs=requests[0]["image_inputs"])
+        return await gateway.extract(requests[0]["fields"], image_inputs=requests[0]["image_inputs"])
 
     results = await asyncio.gather(
-        *[
-            _call_extract_with_vlm_async(request["fields"], image_inputs=request["image_inputs"])
-            for request in requests
-        ],
+        *[gateway.extract(request["fields"], image_inputs=request["image_inputs"]) for request in requests],
     )
     merged: dict[str, Any] = {}
     for group_values in results:
@@ -601,41 +499,6 @@ async def _extract_grouped_values_async(
         for key, value in group_values.items():
             merged[key] = value
     return merged
-
-
-async def _call_extract_with_vlm_async(
-    fields: list[FieldDefinition],
-    image_paths: list[str] | None = None,
-    image_inputs: list[dict[str, str]] | None = None,
-) -> dict[str, Any]:
-    if extract_with_vlm is not _ORIGINAL_EXTRACT_WITH_VLM:
-        if image_paths is None:
-            return await run_sync_with_vlm_limit_async(extract_with_vlm, fields, image_inputs=image_inputs)
-        return await run_sync_with_vlm_limit_async(extract_with_vlm, fields, image_paths=image_paths, image_inputs=image_inputs)
-    return await extract_with_vlm_async(fields, image_paths=image_paths, image_inputs=image_inputs)
-
-
-async def _call_judge_extraction_with_vlm_async(
-    field: FieldDefinition,
-    initial_value: Any,
-    initial_evidence: str | None,
-    image_inputs: list[dict[str, str]],
-) -> dict[str, Any]:
-    if judge_extraction_with_vlm is not _ORIGINAL_JUDGE_EXTRACTION_WITH_VLM:
-        return await run_sync_with_vlm_limit_async(judge_extraction_with_vlm, field, initial_value, initial_evidence, image_inputs)
-    return await judge_extraction_with_vlm_async(field, initial_value, initial_evidence, image_inputs)
-
-
-async def _call_correct_extraction_with_vlm_async(
-    field: FieldDefinition,
-    initial_value: Any,
-    initial_evidence: str | None,
-    judgement_reason: str | None,
-    image_inputs: list[dict[str, str]],
-) -> dict[str, Any]:
-    if correct_extraction_with_vlm is not _ORIGINAL_CORRECT_EXTRACTION_WITH_VLM:
-        return await run_sync_with_vlm_limit_async(correct_extraction_with_vlm, field, initial_value, initial_evidence, judgement_reason, image_inputs)
-    return await correct_extraction_with_vlm_async(field, initial_value, initial_evidence, judgement_reason, image_inputs)
 
 
 def _build_extraction_requests(
@@ -721,7 +584,7 @@ def _build_extraction_requests(
 
 
 def _chunk_fields(fields: list[FieldDefinition], size: int) -> list[list[FieldDefinition]]:
-    return [fields[index:index + size] for index in range(0, len(fields), size)]
+    return [fields[index : index + size] for index in range(0, len(fields), size)]
 
 
 def _field_region_refs(
@@ -828,11 +691,11 @@ def result_to_dict(result: ExtractionResult) -> dict[str, Any]:
     return {
         "id": result.id,
         "job_id": result.job_id,
-        "raw_model_output": json.loads(result.raw_model_output),
-        "validated_output": json.loads(result.validated_output),
-        "corrected_output": json.loads(result.corrected_output) if result.corrected_output else None,
-        "validation_warnings": json.loads(result.validation_warnings),
-        "reviewed_fields": json.loads(result.reviewed_fields),
+        "raw_model_output": result.raw_model_output,
+        "validated_output": result.validated_output,
+        "corrected_output": result.corrected_output,
+        "validation_warnings": result.validation_warnings,
+        "reviewed_fields": result.reviewed_fields,
         "created_at": result.created_at,
         "updated_at": result.updated_at,
     }

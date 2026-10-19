@@ -1,0 +1,102 @@
+/* 디자인 토큰 (docs/ux/module-unification-spec.md B-7). 브랜드: 토스 블루·그레이 --tds-* */
+:root {
+  --tds-gray-50: #f9fafb;
+  --tds-gray-100: #f2f4f6;
+  --tds-gray-200: #e5e8eb;
+  --tds-gray-300: #d1d6db;
+  --tds-gray-500: #8b95a1;
+  --tds-gray-600: #6b7684;
+  --tds-gray-700: #4e5968;
+  --tds-gray-900: #191f28;
+  --tds-blue-50: #e8f3ff;
+  --tds-blue-100: #c9e2ff;
+  --tds-blue-200: #90c2ff;
+  --tds-blue-400: #4593fc;
+  --tds-blue-500: #3182f6;
+  --tds-blue-600: #2272eb;
+  --tds-blue-700: #1b64da;
+  --tds-green-500: #00a881;
+  --tds-yellow-50: #fff6e0;
+  --tds-yellow-700: #8a5800;
+  --tds-red-50: #fff0f3;
+  --tds-red-500: #f04452;
+  --tds-radius-sm: 10px;
+  --tds-radius-md: 14px;
+  --tds-radius-lg: 20px;
+  --tds-shadow-card: 0 10px 30px rgba(25, 31, 40, 0.08);
+  --tds-shadow-focus: 0 18px 46px rgba(25, 31, 40, 0.12);
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  color: var(--tds-gray-900);
+  background: var(--tds-gray-50);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+
+  /* B-7: 참조만 되고 정의되지 않았던 토큰 */
+  --tds-gray-400: #b0b8c1;
+  --tds-gray-800: #333d4b;
+  --tds-blue-300: #64a8ff;
+  --tds-green-50: #e7f8f3;
+  --tds-green-700: #007864;
+  --tds-red-700: #c0303c;
+  --tds-shadow-soft: 0 4px 14px rgba(25, 31, 40, 0.06);
+  --tds-shadow-elevated: var(--tds-shadow-focus);
+
+  /* roles */
+  --color-bg: var(--tds-gray-50);
+  --color-surface: #ffffff;
+  --color-surface-muted: var(--tds-gray-100);
+  --color-border: var(--tds-gray-200);
+  --color-border-strong: var(--tds-gray-300);
+  --color-text: var(--tds-gray-900);
+  --color-text-muted: var(--tds-gray-700);
+  --color-text-subtle: var(--tds-gray-600);
+  --color-accent: var(--tds-blue-500);
+  --color-accent-hover: var(--tds-blue-600);
+  --color-accent-soft: var(--tds-blue-50);
+
+  /* tones (상태 어휘 B-3) */
+  --tone-success-bg: var(--tds-green-50);
+  --tone-success-fg: var(--tds-green-700);
+  --tone-warning-bg: var(--tds-yellow-50);
+  --tone-warning-fg: var(--tds-yellow-700);
+  --tone-danger-bg: var(--tds-red-50);
+  --tone-danger-fg: var(--tds-red-700);
+  --tone-danger-soft-bg: #fff6f0;
+  --tone-danger-soft-fg: #b4532a;
+  --tone-info-bg: var(--tds-blue-50);
+  --tone-info-fg: var(--tds-blue-700);
+  --tone-neutral-bg: var(--tds-gray-100);
+  --tone-neutral-fg: var(--tds-gray-700);
+
+  /* space · radius · type · icon */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+  --font-11: 11px;
+  --font-12: 12px;
+  --font-13: 13px;
+  --font-14: 14px;
+  --font-16: 16px;
+  --font-20: 20px;
+  --font-28: 28px;
+  --icon-sm: 14px;
+  --icon-md: 16px;
+  --icon-lg: 32px;
+  --panel-gap: 12px;
+  --card-padding: 16px;
+}
